@@ -316,6 +316,7 @@ dotfiles/
 | `-SkipScoop` | Scoop 단계 생략 |
 | `-SkipWinget` | winget 단계 생략 |
 | `-SkipConfigs` | 설정 파일 복사 생략 |
+| `-UpgradeExisting` | winget 단계에서 이미 설치된 앱도 최신 버전으로 갱신 |
 | `-HomePath <경로>` | 설정 파일 복사 대상 지정 (기본값 `$HOME`) |
 
 `-HomePath` 는 빈 디렉터리를 지정해 실제 홈을 건드리지 않고 배치 결과를 확인할 때 쓴다.
@@ -406,11 +407,68 @@ Docker 속도 저하의 나머지 원인과 대응은 아래와 같다.
    또는 컨테이너를 원격/클라우드 서버에서 실행하는 방식을 검토한다.
    Docker Desktop 은 상업적 사용 시 유료 라이선스가 필요하다는 점도 함께 고려한다.
 
-## 이미 쓰던 PC 에서 실행할 때 주의
+## 프로그램이 이미 설치된 PC 에서 실행할 때
 
-Scoop 이 설치하는 `git` / `nodejs-lts` / `python` / `temurin21-jdk` 는
-`~\scoop\shims` 를 통해 PATH 앞쪽에 놓이므로, winget 등으로 이미 설치한 같은 도구를 가린다.
-새 PC 구축이 아니라 기존 PC 에서 시험만 할 목적이라면 `-DryRun` 또는 `-SkipScoop` 을 쓸 것.
+깨끗한 새 PC 가 아니라 이미 일부 프로그램을 설치해둔 PC(테스트용 등)에서 돌릴 때
+알고 있어야 할 항목은 아래 세 가지다.
 
-기존 `$HOME\.gitconfig` 는 `.gitconfig.bak` 으로 백업된 뒤 덮어써진다.
-백업본에 있던 PC 고유 설정은 `~/.gitconfig.local` 로 옮겨야 한다.
+### winget 으로 설치된 앱 — 안전
+
+bootstrap 은 `winget import` 에 `--no-upgrade` 를 붙여 실행한다.
+이미 설치된 앱은 `Package is already installed` 로 건너뛰고 다운로드조차 하지 않는다.
+Antigravity, Obsidian, Docker Desktop 등이 이미 있어도 그대로 유지된다.
+
+이 옵션이 없으면 winget 은 **같은 버전이어도 전부 다시 내려받아 재설치한다.**
+목록의 앱을 최신으로 올리고 싶을 때만 `-UpgradeExisting` 을 명시한다.
+
+```powershell
+.\bootstrap.ps1 -UpgradeExisting
+```
+
+### 기존 git / node / python — PATH 우선순위가 바뀜
+
+Scoop 은 이미 설치된 도구를 인식하지 못하고 자기 버전을 별도로 설치한다.
+`~\scoop\shims` 가 PATH 앞쪽에 놓이므로, 설치 후에는 **Scoop 쪽이 우선 사용된다.**
+기존 설치본이 사라지는 것은 아니고 가려질 뿐이다.
+
+어느 쪽이 쓰이는지는 아래로 확인한다.
+
+```powershell
+Get-Command git, node, python | Select-Object Name, Source
+```
+
+기존 도구를 그대로 쓰고 싶으면 Scoop 단계를 건너뛴다.
+
+```powershell
+.\bootstrap.ps1 -SkipScoop
+```
+
+### `$HOME\.gitconfig` — 덮어써짐, 확인 필요
+
+**세 가지 중 실제로 주의할 항목이다.** 내용이 이미 같으면 건너뛰지만,
+다르면 `.gitconfig.bak` 으로 백업한 뒤 이 리포지토리의 설정으로 교체한다.
+
+이미 git 을 설정해둔 PC 라면 실행 전에 현재 설정을 확인해둔다.
+
+```powershell
+Get-Content $HOME\.gitconfig
+```
+
+`user.name` / `user.email` / `init.defaultBranch` / `core.autocrlf` 정도만 있다면
+이 리포지토리의 `configs/.gitconfig` 가 모두 포함하므로 잃을 것이 없다.
+사내 credential, `core.hooksPath`, `core.excludesFile` 등이 있다면
+실행 후 `.gitconfig.bak` 에서 `~/.gitconfig.local` 로 옮긴다.
+
+설정 파일만 건드리지 않으려면 `-SkipConfigs` 를 쓴다.
+
+```powershell
+.\bootstrap.ps1 -SkipConfigs
+```
+
+### 가장 안전한 시험 방법
+
+무엇이 바뀔지 먼저 확인한다.
+
+```powershell
+.\bootstrap.ps1 -DryRun
+```

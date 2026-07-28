@@ -21,6 +21,10 @@
 .PARAMETER SkipConfigs
     설정 파일($HOME 복사) 단계를 건너뛴다.
 
+.PARAMETER UpgradeExisting
+    winget 단계에서 이미 설치된 앱도 최신 버전으로 올린다.
+    기본값은 건너뛰기(--no-upgrade)이므로 여러 번 실행해도 재설치가 일어나지 않는다.
+
 .PARAMETER HomePath
     설정 파일을 복사할 대상 디렉터리. 기본값은 $HOME.
     빈 디렉터리를 지정하면 실제 홈을 건드리지 않고 새 PC 상황을 그대로 재현할 수 있다.
@@ -45,6 +49,7 @@ param(
     [switch]$SkipScoop,
     [switch]$SkipWinget,
     [switch]$SkipConfigs,
+    [switch]$UpgradeExisting,
     [string]$HomePath = $HOME,
     [switch]$DryRun
 )
@@ -195,23 +200,30 @@ if (-not $SkipWinget) {
     }
     elseif ($DryRun) {
         $count = (Get-Content $wingetList -Raw | ConvertFrom-Json).Sources[0].Packages.Count
-        Write-Info "winget import 예정: $wingetList ($count 개 패키지)"
+        $mode  = if ($UpgradeExisting) { '이미 설치된 앱도 최신 버전으로 갱신' } else { '이미 설치된 앱은 건너뜀' }
+        Write-Info "winget import 예정: $wingetList ($count 개 패키지, $mode)"
     }
     else {
         if (-not $isAdmin) {
             Write-Fail '관리자 권한이 아님. 일부 앱이 UAC 프롬프트를 띄우거나 실패할 수 있음'
         }
+        # winget import 는 기본적으로 이미 설치된 앱도 다시 내려받아 재설치한다.
+        # --no-upgrade 를 주면 설치된 버전이 있을 때 건너뛰므로 재실행이 안전해진다.
+        # 목록의 앱을 최신으로 올리려면 -UpgradeExisting 을 지정한다.
+        $importArgs = @(
+            '--accept-package-agreements'
+            '--accept-source-agreements'
+            '--ignore-unavailable'
+            '--disable-interactivity'
+        )
+        if (-not $UpgradeExisting) { $importArgs += '--no-upgrade' }
+
         try {
-            winget import -i $wingetList `
-                --accept-package-agreements `
-                --accept-source-agreements `
-                --ignore-unavailable `
-                --disable-interactivity
-            # winget import 는 일부 패키지가 이미 설치되어 있어도 0 이 아닌 코드를 반환한다.
+            winget import -i $wingetList @importArgs
             if ($LASTEXITCODE -eq 0) {
                 Write-Ok 'winget import 완료'
             } else {
-                Write-Fail "winget import 가 종료 코드 $LASTEXITCODE 로 끝남 (이미 설치된 앱이 있으면 정상일 수 있음). 위 로그 확인 필요"
+                Write-Fail "winget import 가 종료 코드 $LASTEXITCODE 로 끝남. 위 로그에서 실패한 패키지 확인 필요"
             }
         }
         catch {
@@ -249,6 +261,12 @@ if (-not $SkipConfigs) {
 
         if (-not (Test-Path $source)) {
             Write-Fail "원본 없음: $source"
+            continue
+        }
+        # 내용이 이미 같으면 백업본을 만들지 않고 넘어간다. (재실행 시 .bak 이 덮어써지는 것을 막는다)
+        if ((Test-Path $target) -and
+            ((Get-FileHash $source).Hash -eq (Get-FileHash $target).Hash)) {
+            Write-Ok "$($item.Source) 이미 최신 상태"
             continue
         }
         if ($DryRun) {
