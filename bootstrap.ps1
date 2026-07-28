@@ -1,0 +1,319 @@
+﻿#Requires -Version 5.1
+<#
+.SYNOPSIS
+    새 PC 개발환경 자동 구축 스크립트.
+
+.DESCRIPTION
+    권한 수준이 확정되지 않은 PC(관리형 / 개인)에 대응하기 위해 이중 구조로 동작한다.
+
+      - Scoop  : 관리자 권한 없이 설치 가능한 개발 툴체인 (apps/scoop-apps.txt)
+      - winget : 관리자 권한이 필요한 GUI 앱 및 런타임      (apps/winget-apps.json)
+
+    Scoop 단계는 항상 실행되고, winget 단계는 winget 이 있을 때만 실행된다.
+    두 목록은 서로 중복되지 않는다. 개별 앱 설치 실패는 경고로 처리하고 전체를 중단하지 않는다.
+
+.PARAMETER SkipScoop
+    Scoop 설치 단계를 건너뛴다.
+
+.PARAMETER SkipWinget
+    winget 설치 단계를 건너뛴다.
+
+.PARAMETER SkipConfigs
+    설정 파일($HOME 복사) 단계를 건너뛴다.
+
+.PARAMETER HomePath
+    설정 파일을 복사할 대상 디렉터리. 기본값은 $HOME.
+    빈 디렉터리를 지정하면 실제 홈을 건드리지 않고 새 PC 상황을 그대로 재현할 수 있다.
+
+.PARAMETER DryRun
+    실제 설치/복사 없이 수행할 작업만 출력한다. 새 PC 투입 전 검증용.
+
+.EXAMPLE
+    .\bootstrap.ps1
+    전체 실행. winget 단계는 관리자 권한 PowerShell 을 권장한다.
+
+.EXAMPLE
+    .\bootstrap.ps1 -DryRun
+    아무것도 설치하지 않고 실행 계획만 확인한다.
+
+.EXAMPLE
+    .\bootstrap.ps1 -SkipScoop -SkipWinget -HomePath C:\temp\newpc
+    설정 파일 배치만 격리된 디렉터리에 재현해 결과를 확인한다.
+#>
+[CmdletBinding()]
+param(
+    [switch]$SkipScoop,
+    [switch]$SkipWinget,
+    [switch]$SkipConfigs,
+    [string]$HomePath = $HOME,
+    [switch]$DryRun
+)
+
+# ---------------------------------------------------------------------------
+# 0. 실행 정책 해제 및 차단 해제
+# ---------------------------------------------------------------------------
+# 그룹 정책이나 상위 스코프에서 실행 정책이 강제된 PC(관리형 PC 등)에서는
+# CurrentUser 스코프 변경이 거부된다. 이미 스크립트가 실행 중이라는 것은
+# 유효 정책이 충분하다는 뜻이므로, 실패해도 진행을 막지 않는다.
+try {
+    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+}
+catch {
+    Write-Host "  [INFO] 실행 정책 변경이 상위 정책에 의해 거부됨 (현재 유효 정책: $(Get-ExecutionPolicy)). 계속 진행합니다." -ForegroundColor Gray
+}
+
+Get-ChildItem -Path $PSScriptRoot -Filter *.ps1 -Recurse | Unblock-File
+
+$ErrorActionPreference = 'Continue'
+$ProgressPreference    = 'SilentlyContinue'
+
+$script:Warnings = New-Object System.Collections.Generic.List[string]
+
+function Write-Step { param([string]$Message) Write-Host "`n=== $Message ===" -ForegroundColor Cyan }
+function Write-Ok   { param([string]$Message) Write-Host "  [OK]   $Message" -ForegroundColor Green }
+function Write-Info { param([string]$Message) Write-Host "  [..]   $Message" -ForegroundColor Gray }
+function Write-Fail {
+    param([string]$Message)
+    Write-Host "  [WARN] $Message" -ForegroundColor Yellow
+    $script:Warnings.Add($Message)
+}
+
+function Test-Administrator {
+    $identity  = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = New-Object Security.Principal.WindowsPrincipal($identity)
+    return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+$isAdmin     = Test-Administrator
+$appsDir     = Join-Path $PSScriptRoot 'apps'
+$configsDir  = Join-Path $PSScriptRoot 'configs'
+$scoopList   = Join-Path $appsDir 'scoop-apps.txt'
+$wingetList  = Join-Path $appsDir 'winget-apps.json'
+
+Write-Host ""
+Write-Host "개발환경 자동 구축 시작" -ForegroundColor White
+Write-Host "  스크립트 위치 : $PSScriptRoot"
+Write-Host "  관리자 권한   : $(if ($isAdmin) { '있음' } else { '없음 (winget 단계가 실패할 수 있음)' })"
+Write-Host "  설정 대상     : $HomePath"
+if ($DryRun) { Write-Host "  실행 모드     : DRY RUN (실제 변경 없음)" -ForegroundColor Magenta }
+
+# ---------------------------------------------------------------------------
+# 1. Scoop 설치 (관리자 권한 불필요)
+# ---------------------------------------------------------------------------
+if (-not $SkipScoop) {
+    Write-Step '1. Scoop'
+
+    if (Get-Command scoop -ErrorAction SilentlyContinue) {
+        Write-Ok 'Scoop 이미 설치됨'
+    }
+    elseif ($DryRun) {
+        Write-Info 'Scoop 미설치 상태 -> 설치 예정 (get.scoop.sh)'
+    }
+    else {
+        try {
+            Write-Info 'Scoop 설치 중...'
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+            Invoke-RestMethod -Uri 'https://get.scoop.sh' | Invoke-Expression
+            $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"
+            if (Get-Command scoop -ErrorAction SilentlyContinue) {
+                Write-Ok 'Scoop 설치 완료'
+            } else {
+                Write-Fail 'Scoop 설치 후에도 scoop 명령을 찾을 수 없음'
+            }
+        }
+        catch {
+            Write-Fail "Scoop 설치 실패: $($_.Exception.Message)"
+        }
+    }
+
+    if (-not (Test-Path $scoopList)) {
+        Write-Fail "목록 파일 없음: $scoopList"
+    }
+    elseif (-not (Get-Command scoop -ErrorAction SilentlyContinue) -and -not $DryRun) {
+        Write-Fail 'Scoop 을 사용할 수 없어 Scoop 앱 설치를 건너뜀'
+    }
+    else {
+        # 주석/빈 줄 제거
+        $scoopEntries = Get-Content $scoopList -Encoding UTF8 |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ -and -not $_.StartsWith('#') }
+
+        # 'bucket/package' 형식에서 필요한 버킷을 먼저 추가
+        $buckets = $scoopEntries |
+            Where-Object { $_ -like '*/*' } |
+            ForEach-Object { $_.Split('/')[0] } |
+            Sort-Object -Unique
+
+        foreach ($bucket in $buckets) {
+            if ($DryRun) { Write-Info "버킷 추가 예정: $bucket"; continue }
+            try {
+                $existing = (scoop bucket list 6>$null) | Out-String
+                if ($existing -match "(?m)^\s*$([regex]::Escape($bucket))\s") {
+                    Write-Ok "버킷 이미 등록됨: $bucket"
+                } else {
+                    scoop bucket add $bucket
+                    Write-Ok "버킷 추가: $bucket"
+                }
+            }
+            catch {
+                Write-Fail "버킷 추가 실패: $bucket / $($_.Exception.Message)"
+            }
+        }
+
+        foreach ($app in $scoopEntries) {
+            if ($DryRun) { Write-Info "설치 예정: $app"; continue }
+            try {
+                Write-Info "설치: $app"
+                scoop install $app
+                if ($LASTEXITCODE -ne 0) {
+                    throw "scoop 종료 코드 $LASTEXITCODE"
+                }
+                Write-Ok $app
+            }
+            catch {
+                # 개별 실패는 흡수하고 다음 앱으로 계속 진행한다.
+                Write-Fail "설치 실패: $app / $($_.Exception.Message) / 계속 진행"
+            }
+        }
+    }
+}
+else {
+    Write-Step '1. Scoop (건너뜀)'
+}
+
+# ---------------------------------------------------------------------------
+# 2. winget 설치 (관리자 권한 필요)
+# ---------------------------------------------------------------------------
+if (-not $SkipWinget) {
+    Write-Step '2. winget'
+
+    if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Fail 'winget 을 찾을 수 없음. Microsoft Store 의 "앱 설치 관리자"를 먼저 설치할 것'
+    }
+    elseif (-not (Test-Path $wingetList)) {
+        Write-Fail "목록 파일 없음: $wingetList"
+    }
+    elseif ($DryRun) {
+        $count = (Get-Content $wingetList -Raw | ConvertFrom-Json).Sources[0].Packages.Count
+        Write-Info "winget import 예정: $wingetList ($count 개 패키지)"
+    }
+    else {
+        if (-not $isAdmin) {
+            Write-Fail '관리자 권한이 아님. 일부 앱이 UAC 프롬프트를 띄우거나 실패할 수 있음'
+        }
+        try {
+            winget import -i $wingetList `
+                --accept-package-agreements `
+                --accept-source-agreements `
+                --ignore-unavailable `
+                --disable-interactivity
+            # winget import 는 일부 패키지가 이미 설치되어 있어도 0 이 아닌 코드를 반환한다.
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok 'winget import 완료'
+            } else {
+                Write-Fail "winget import 가 종료 코드 $LASTEXITCODE 로 끝남 (이미 설치된 앱이 있으면 정상일 수 있음). 위 로그 확인 필요"
+            }
+        }
+        catch {
+            Write-Fail "winget import 실패: $($_.Exception.Message)"
+        }
+    }
+}
+else {
+    Write-Step '2. winget (건너뜀)'
+}
+
+# ---------------------------------------------------------------------------
+# 3. 설정 파일 배치
+# ---------------------------------------------------------------------------
+if (-not $SkipConfigs) {
+    Write-Step '3. 설정 파일'
+
+    if (-not (Test-Path $HomePath)) {
+        if ($DryRun) {
+            Write-Info "대상 디렉터리 생성 예정: $HomePath"
+        } else {
+            New-Item -ItemType Directory -Path $HomePath -Force | Out-Null
+            Write-Info "대상 디렉터리 생성: $HomePath"
+        }
+    }
+
+    $configMap = @(
+        @{ Source = '.gitconfig'; Target = (Join-Path $HomePath '.gitconfig') }
+        @{ Source = '.wslconfig'; Target = (Join-Path $HomePath '.wslconfig') }
+    )
+
+    foreach ($item in $configMap) {
+        $source = Join-Path $configsDir $item.Source
+        $target = $item.Target
+
+        if (-not (Test-Path $source)) {
+            Write-Fail "원본 없음: $source"
+            continue
+        }
+        if ($DryRun) {
+            Write-Info "복사 예정: $source -> $target"
+            continue
+        }
+        try {
+            if (Test-Path $target) {
+                # 기존 설정을 덮어쓰기 전에 항상 백업본을 남긴다.
+                $backup = "$target.bak"
+                Copy-Item -Path $target -Destination $backup -Force
+                Write-Info "기존 파일 백업: $backup"
+                if ($item.Source -eq '.gitconfig') {
+                    Write-Info '기존 .gitconfig 의 PC 고유 설정(사내 credential, core.hooksPath 등)은 백업본에서 ~/.gitconfig.local 로 옮길 것'
+                }
+            }
+            Copy-Item -Path $source -Destination $target -Force
+            Write-Ok "$($item.Source) -> $target"
+        }
+        catch {
+            Write-Fail "복사 실패: $($item.Source) / $($_.Exception.Message)"
+        }
+    }
+
+    if (-not $DryRun) {
+        Write-Info 'WSL 에 .wslconfig 를 적용하려면 "wsl --shutdown" 후 재시작할 것'
+    }
+}
+else {
+    Write-Step '3. 설정 파일 (건너뜀)'
+}
+
+# ---------------------------------------------------------------------------
+# 4. 패키지 매니저로 설치되지 않는 앱 안내
+# ---------------------------------------------------------------------------
+Write-Step '4. 수동 설치 안내'
+
+$manualScript = Join-Path $PSScriptRoot 'install-manual-apps.ps1'
+if (Test-Path $manualScript) {
+    if ($DryRun) {
+        Write-Info "실행 예정: $manualScript"
+    } else {
+        & $manualScript
+    }
+} else {
+    Write-Fail "스크립트 없음: $manualScript"
+}
+
+# ---------------------------------------------------------------------------
+# 5. 요약
+# ---------------------------------------------------------------------------
+Write-Step '완료'
+
+if ($script:Warnings.Count -eq 0) {
+    Write-Host "  경고 없이 종료되었습니다." -ForegroundColor Green
+} else {
+    Write-Host "  경고 $($script:Warnings.Count) 건:" -ForegroundColor Yellow
+    foreach ($warning in $script:Warnings) {
+        Write-Host "    - $warning" -ForegroundColor Yellow
+    }
+}
+
+Write-Host ""
+Write-Host "다음 단계:" -ForegroundColor White
+Write-Host "  1) 새 터미널을 열어 PATH 를 갱신한다."
+Write-Host "  2) git --version / java -version / node -v / python --version 으로 확인한다."
+Write-Host "  3) wsl --shutdown 으로 .wslconfig 를 적용한다."
+Write-Host ""

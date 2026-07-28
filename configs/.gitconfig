@@ -1,0 +1,45 @@
+# PC 고유 설정(사내 git 서버 credential, core.hooksPath, core.excludesFile 등)은
+# 이 파일에 넣지 말고 ~/.gitconfig.local 에 작성한다. 아래 include 가 뒤에서 읽으므로
+# 같은 키를 다시 정의하면 로컬 값이 우선한다. 파일이 없으면 git 이 조용히 무시한다.
+
+[user]
+	name = serena
+	email = 239265396+hayohio-bit@users.noreply.github.com
+
+[init]
+	defaultBranch = main
+
+[core]
+	autocrlf = true
+	quotepath = false
+	longpaths = true
+
+[pull]
+	rebase = true
+
+[fetch]
+	prune = true
+
+[push]
+	default = current
+	autoSetupRemote = true
+
+[diff]
+	renames = copies
+
+[alias]
+	st = status -sb
+	co = checkout
+	br = branch
+	lg = log --oneline --graph --decorate --all
+	last = log -1 HEAD --stat
+
+[credential "https://github.com"]
+	helper = !gh auth git-credential
+
+[credential "https://gist.github.com"]
+	helper = !gh auth git-credential
+
+# 마지막에 두어 PC 고유 설정이 위 값을 덮어쓸 수 있게 한다.
+[include]
+	path = ~/.gitconfig.local

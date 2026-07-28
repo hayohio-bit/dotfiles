@@ -1,0 +1,32 @@
+# bootstrap 이 남기는 백업본
+*.bak
+
+# PC 고유 설정 (커밋 대상 아님)
+.gitconfig.local
+
+# 로컬 전용 작업 공간
+.shy/
+_shy/
+.ssunhy/
+.personal/
+_private/
+local/
+scratch/
+AGENTS.override.md
+CLAUDE.local.md
+handoff.md
+
+# 비밀 정보
+.env
+.env.*
+!.env.example
+*.secret
+secret.yaml
+*.key
+*.pem
+*.crt
+
+# OS
+Thumbs.db
+desktop.ini
+.DS_Store
