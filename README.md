@@ -4,24 +4,283 @@
 
 권한 수준이 확정되지 않은 상황(관리형 PC / 개인 PC)에 대응하기 위해
 **Scoop(무권한) + winget(관리자 권한)** 이중 구조로 구성되어 있다.
+Scoop 단계는 어떤 PC에서도 실행되므로, winget 단계가 통째로 실패해도 개발은 시작할 수 있다.
 
-## 빠른 시작
+---
+
+# 새 PC 설치 절차
+
+아래 1~7단계를 순서대로 따라간다. 총 소요 시간은 30분~1시간이다.
+(Visual Studio Build Tools, Docker Desktop, MySQL 이 대부분의 시간을 차지한다.)
+
+## 1단계. 권한 확인
+
+PowerShell 을 열고 아래를 실행한다.
 
 ```powershell
-git clone https://github.com/hayohio-bit/dotfiles.git
+([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+```
+
+관리자 권한으로 PowerShell 을 열려면 `Win + X` → **터미널(관리자)** 를 선택한다.
+
+| 결과 | 진행할 경로 |
+|---|---|
+| `True` 로 열 수 있음 | 2단계 **경로 A** |
+| 관리자로 열 수 없음 | 2단계 **경로 B** |
+
+## 2단계. 리포지토리 가져오기
+
+리포지토리가 **private** 이므로 인증이 필요하다.
+또한 새 PC 에는 git 이 없는데 git 은 이 스크립트가 설치하는 대상이므로,
+리포지토리를 받는 단계에서만 별도 수단이 필요하다.
+
+### 경로 A — 관리자 권한 있음
+
+관리자 PowerShell 에서 git 과 GitHub CLI 를 먼저 설치한다.
+
+```powershell
+winget install --id Git.Git -e --accept-package-agreements --accept-source-agreements
+winget install --id GitHub.cli -e --accept-package-agreements --accept-source-agreements
+```
+
+**설치 후 PowerShell 을 새로 연다.** (PATH 가 갱신되어야 `git` / `gh` 명령을 찾는다.)
+
+```powershell
+gh auth login
+```
+
+- `GitHub.com` → `HTTPS` → `Login with a web browser` 순으로 선택한다.
+- 화면에 표시된 8자리 코드를 브라우저에 입력해 인증한다.
+
+인증이 끝나면 리포지토리를 받는다.
+
+```powershell
+cd $HOME\workspace          # 없으면: mkdir $HOME\workspace
+gh repo clone hayohio-bit/dotfiles
 cd dotfiles
-.\bootstrap.ps1
 ```
 
-`winget` 단계는 관리자 권한 PowerShell 에서 실행하는 것을 권장한다.
+### 경로 B — 관리자 권한 없음
 
-실제 설치 전에 실행 계획만 확인하려면:
+winget 으로 git 을 설치하는 것부터 막힐 수 있으므로 브라우저로 받는다.
+
+1. 브라우저에서 GitHub 에 로그인한다.
+2. https://github.com/hayohio-bit/dotfiles 접속
+3. 초록색 **Code** 버튼 → **Download ZIP**
+4. 받은 ZIP 을 `C:\Users\<사용자>\workspace\` 에 압축 해제한다.
+
+압축 해제한 파일은 인터넷에서 받은 표시(Mark of the Web)가 붙어 실행이 차단되므로 해제한다.
 
 ```powershell
-.\bootstrap.ps1 -DryRun
+cd $HOME\workspace\dotfiles-main    # 폴더명은 압축 해제 결과에 맞춘다
+Get-ChildItem -Recurse | Unblock-File
 ```
 
-## 구조
+## 3단계. bootstrap 실행
+
+Windows 11 의 기본 실행 정책은 `Restricted` 라 `.\bootstrap.ps1` 이 바로 실행되지 않는다.
+스크립트 안에 정책을 푸는 코드가 있지만 스크립트가 시작되어야 그 코드가 도는 구조이므로,
+**첫 실행만 `-ExecutionPolicy Bypass` 로 우회한다.**
+
+먼저 아무것도 설치하지 않고 계획만 확인한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DryRun
+```
+
+`설치 예정:` 목록과 `winget import 예정:` 이 출력되고 `경고 없이 종료되었습니다` 로 끝나면 정상이다.
+`목록 파일 없음` 경고가 뜨면 `apps\` 폴더까지 제대로 받았는지 확인한다.
+
+이상이 없으면 실제로 실행한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+```
+
+실행 중 UAC 창이 여러 번 뜰 수 있다. 모두 허용한다.
+개별 앱이 실패해도 `[WARN]` 으로 기록하고 다음 앱으로 넘어가며, 마지막에 경고가 모여 출력된다.
+
+마지막 4단계에서 Orca / Antigravity / Docker Desktop 중 winget 으로 설치되지 않은 것이 있으면
+다운로드 페이지가 브라우저로 열린다. 열린 페이지에서 설치 파일을 받아 수동 설치한다.
+
+## 4단계. 결과 확인
+
+**PowerShell 을 새로 연다.** PATH 가 갱신되지 않으면 아래 명령이 전부 실패한다.
+
+아래 6개가 모두 버전 문자열을 출력하면 정상이다.
+(괄호는 2026-07 기준 Scoop 최신 버전으로, 설치 시점에 따라 달라진다.)
+
+```powershell
+git --version          # git version 2.55.x
+node -v                # v24.x.x   (LTS)
+python --version       # Python 3.14.x
+java -version          # openjdk version "21.0.x"
+gh --version
+rg --version           # ripgrep
+```
+
+`명령을 찾을 수 없습니다` 가 나오면 PowerShell 을 새로 열지 않은 것이다.
+
+설정 파일이 배치되었는지 확인한다.
+
+```powershell
+Get-Content $HOME\.gitconfig
+Get-Content $HOME\.wslconfig
+```
+
+`java -version` 이 동작하면 `JAVA_HOME` 도 함께 설정된 상태다. 확인하려면:
+
+```powershell
+$env:JAVA_HOME
+```
+
+## 5단계. PC 고유 git 설정
+
+`configs/.gitconfig` 는 모든 PC 에 공통으로 적용되는 값만 담는다.
+사내 git 서버 credential, `core.hooksPath`, `core.excludesFile` 처럼 PC 마다 달라지는 값은
+`~/.gitconfig.local` 에 따로 작성한다. 필요 없으면 이 단계는 건너뛴다.
+
+```powershell
+notepad $HOME\.gitconfig.local
+```
+
+```ini
+[credential "https://git.example.co.kr:58021"]
+	provider = generic
+[core]
+	excludesFile = C:/Users/<사용자>/bin/global-gitignore
+	hooksPath = C:/Users/<사용자>/bin/.githooks
+```
+
+`configs/.gitconfig` 마지막의 `[include]` 가 이 파일을 읽어들이며,
+같은 키를 다시 정의하면 로컬 값이 우선한다. 파일이 없으면 git 이 조용히 무시한다.
+
+적용 결과는 아래로 확인한다.
+
+```powershell
+git config --list --show-origin
+```
+
+## 6단계. WSL 및 Docker 마무리
+
+먼저 WSL 이 동작하는지 확인한다.
+
+```powershell
+wsl --status
+```
+
+기본 배포판과 WSL 버전이 출력되면 정상이다.
+오류가 나거나 설치되지 않았다는 메시지가 나오면 WSL 기능이 아직 활성화되지 않은 것이므로,
+**재부팅한 뒤** 아래를 실행하고 다시 확인한다.
+
+```powershell
+wsl --install
+```
+
+배포판이 하나도 없으면 설치한다. (Docker Desktop 만 쓸 거라면 생략 가능하다.)
+
+```powershell
+wsl --install -d Ubuntu
+```
+
+이제 `.wslconfig`(메모리 8GB / CPU 4코어 상한)를 적용한다.
+
+```powershell
+wsl --shutdown
+```
+
+이후 WSL 또는 Docker Desktop 을 다시 실행하면 제한값이 반영된다.
+Docker Desktop 은 최초 실행 시 로그인과 추가 구성 요소 설치를 요구할 수 있다.
+
+## 7단계. 마무리 점검
+
+- [ ] `git --version` / `node -v` / `python --version` / `java -version` 모두 응답
+- [ ] `$HOME\.gitconfig`, `$HOME\.wslconfig` 존재
+- [ ] 필요 시 `$HOME\.gitconfig.local` 작성 완료
+- [ ] Antigravity 실행 및 Google 계정 로그인
+- [ ] Orca 실행 및 에이전트(Claude Code 등) 연결 확인
+- [ ] Docker Desktop 실행 후 `docker run hello-world` 성공
+- [ ] bootstrap 마지막에 출력된 `[WARN]` 항목 처리 (아래 문제 해결 참고)
+
+---
+
+# 문제 해결
+
+### `이 시스템에서 스크립트를 실행할 수 없으므로`
+
+실행 정책에 막힌 경우다. 3단계처럼 `-ExecutionPolicy Bypass` 를 붙여 실행한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
+```
+
+### `[INFO] 실행 정책 변경이 상위 정책에 의해 거부됨`
+
+관리형 PC 에서 그룹 정책으로 실행 정책이 강제된 경우다.
+스크립트는 이미 실행 중이므로 **문제가 아니다.** 그대로 진행된다.
+
+### `scoop` / `git` / `node` 명령을 찾을 수 없음
+
+PATH 가 갱신되지 않았다. **PowerShell 을 새로 열고** 다시 시도한다.
+그래도 안 되면 아래로 현재 세션에만 임시 반영한다.
+
+```powershell
+$env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"
+```
+
+### `winget import 가 종료 코드 ...(으)로 끝남`
+
+이미 설치된 앱이 목록에 있으면 winget 은 0 이 아닌 코드를 반환한다.
+위쪽 로그에서 실제 실패한 앱만 확인하고, 필요하면 개별 설치한다.
+
+```powershell
+winget install --id <패키지ID> -e --accept-package-agreements --accept-source-agreements
+```
+
+### `winget 을 찾을 수 없음`
+
+Microsoft Store 에서 **앱 설치 관리자(App Installer)** 를 설치한 뒤 다시 실행한다.
+설치가 불가능한 환경이면 `-SkipWinget` 으로 Scoop 단계만 진행한다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -SkipWinget
+```
+
+### 특정 Scoop 앱만 설치 실패
+
+전체는 계속 진행되므로 나중에 개별 설치하면 된다.
+
+```powershell
+scoop install <패키지명>
+scoop install java/temurin21-jdk    # 버킷이 필요한 경우
+```
+
+### `node -v` 결과가 예상과 다름
+
+`nvm` 이 `nodejs-lts` 와 PATH 가 겹쳐 나중에 설치된 쪽이 우선권을 갖는다.
+평소에는 신경 쓸 필요가 없고, 버전을 고정하려면 아래로 전환한다.
+
+```powershell
+nvm install lts
+nvm use lts
+```
+
+### `gh auth login` 이 안 되는 환경
+
+브라우저 인증이 막힌 경우 Personal Access Token 방식을 쓴다.
+GitHub → Settings → Developer settings → Personal access tokens 에서 `repo` 권한 토큰을 만들고,
+`gh auth login` → `Paste an authentication token` 을 선택한다.
+
+### 기존 PC 에서 실행해 `.gitconfig` 가 덮어써짐
+
+bootstrap 은 덮어쓰기 전 `$HOME\.gitconfig.bak` 으로 백업한다.
+백업본을 열어 PC 고유 설정을 `~/.gitconfig.local` 로 옮기면 된다.
+
+---
+
+# 참고 자료
+
+## 리포지토리 구조
 
 ```
 dotfiles/
@@ -74,9 +333,12 @@ dotfiles/
   버전 관리자 `nvm` `pyenv`, CLI `gh` `7zip` `sudo` `ripgrep` `fzf`)
 - `winget-apps.json` — GUI 앱, 시스템 통합 앱, 관리자 권한이 필요한 항목
 
+Scoop 단계는 어떤 PC에서도 실행되므로, 툴체인은 winget 목록에서 제외했다.
+따라서 관리자 권한이 없는 PC에서도 개발은 바로 시작할 수 있다.
+
 Chocolatey 는 제외했다. 대부분 관리자 권한을 요구해 권한 제한 환경에서 실패한다.
 
-`nvm` / `pyenv` 는 `nodejs-lts` / `python` 과 shim 이 겹쳐 나중에 설치된 쪽이 PATH 우선권을 갖는다.
+`nvm` / `pyenv` 는 `nodejs-lts` / `python` 과 PATH 가 겹쳐 나중에 설치된 쪽이 우선권을 갖는다.
 평소에는 최신 LTS 단일 버전을 쓰고, 프로젝트별 버전 요구가 생기면 아래로 전환한다.
 
 ```powershell
@@ -84,11 +346,9 @@ nvm install lts       ; nvm use lts
 pyenv install 3.13.0  ; pyenv global 3.13.0
 ```
 
-Scoop 단계는 어떤 PC에서도 실행되므로, 툴체인은 winget 목록에서 제외했다.
-따라서 관리자 권한이 없는 PC에서도 개발은 바로 시작할 수 있다.
-
 `java` 버킷처럼 기본 버킷이 아닌 곳의 패키지는 `java/temurin21-jdk` 형식으로 적으면
 bootstrap 이 버킷을 자동으로 추가한다.
+`temurin21-jdk` 는 설치 시 `JAVA_HOME` 을 함께 설정한다.
 
 ## 목록 갱신
 
@@ -108,38 +368,22 @@ winget export -o apps\winget-apps.json
   `Python.Python.*`, `Python.Launcher`, `Microsoft.OpenJDK.*`
 - `winget export` 실행 중 `not available from any source` 경고가 뜬 Windows 내장 구성요소 전반
 
-## PC 고유 git 설정
-
-`configs/.gitconfig` 는 모든 PC 에 공통으로 적용되는 값만 담는다.
-사내 git 서버 credential, `core.hooksPath`, `core.excludesFile` 처럼 PC 마다 달라지는 값은
-`~/.gitconfig.local` 에 작성한다. `configs/.gitconfig` 마지막의 `[include]` 가 이를 읽어들이며,
-같은 키를 다시 정의하면 로컬 값이 우선한다. 파일이 없으면 git 이 조용히 무시한다.
-
-```ini
-# ~/.gitconfig.local
-[credential "https://git.example.co.kr:58021"]
-	provider = generic
-[core]
-	excludesFile = C:/Users/<사용자>/bin/global-gitignore
-	hooksPath = C:/Users/<사용자>/bin/.githooks
-```
-
-bootstrap 은 기존 `$HOME\.gitconfig` 를 `.gitconfig.bak` 으로 백업한 뒤 덮어쓴다.
-이미 쓰던 PC 에서 실행했다면 백업본을 열어 PC 고유 설정을 `~/.gitconfig.local` 로 옮겨야 한다.
+Scoop 목록을 갱신하려면 `apps/scoop-apps.txt` 에 한 줄씩 추가한다.
+기본 버킷(main) 외의 패키지는 `버킷명/패키지명` 형식으로 적는다.
 
 ## 확정 스택
 
 | 항목 | 값 |
 |---|---|
 | Java | 21 (`java/temurin21-jdk`) |
-| Node.js | 최신 LTS (`main/nodejs-lts`) |
-| Python | 최신 안정판 (`main/python`) |
+| Node.js | 최신 LTS (`nodejs-lts`) |
+| Python | 최신 안정판 (`python`) |
 | Git user.name | serena |
 | Git user.email | 239265396+hayohio-bit@users.noreply.github.com |
 | IDE | Antigravity (`Google.Antigravity`, `Google.AntigravityIDE`) |
 | 에이전트 오케스트레이션 | Orca (`StablyAI.Orca`) |
 
-## WSL 설정
+## WSL 및 Docker 설정
 
 `configs/.wslconfig` 는 저사양 PC 에서 Docker/WSL 이 호스트 자원을 과점하는 문제를 완화한다.
 
@@ -150,12 +394,7 @@ processors=4
 swap=0
 ```
 
-복사 후 아래 명령으로 적용한다.
-
-```powershell
-wsl --shutdown
-```
-
+복사 후 `wsl --shutdown` 으로 적용한다.
 메모리가 16GB 미만인 PC 는 `memory` 값을 4GB 로 낮추는 것을 검토한다.
 
 Docker 속도 저하의 나머지 원인과 대응은 아래와 같다.
@@ -167,24 +406,11 @@ Docker 속도 저하의 나머지 원인과 대응은 아래와 같다.
    또는 컨테이너를 원격/클라우드 서버에서 실행하는 방식을 검토한다.
    Docker Desktop 은 상업적 사용 시 유료 라이선스가 필요하다는 점도 함께 고려한다.
 
-## 새 PC 검증 절차
-
-```powershell
-.\bootstrap.ps1 -DryRun                                       # 계획 확인
-.\bootstrap.ps1 -SkipScoop -SkipWinget -HomePath C:\temp\newpc # 설정 배치만 격리 확인
-.\bootstrap.ps1                                               # 실제 실행 (관리자 권한 권장)
-
-# 새 터미널에서
-git --version
-java -version
-node -v
-python --version
-Get-Content $HOME\.gitconfig
-Get-Content $HOME\.wslconfig
-```
-
-### 이미 쓰던 PC 에서 실행할 때 주의
+## 이미 쓰던 PC 에서 실행할 때 주의
 
 Scoop 이 설치하는 `git` / `nodejs-lts` / `python` / `temurin21-jdk` 는
 `~\scoop\shims` 를 통해 PATH 앞쪽에 놓이므로, winget 등으로 이미 설치한 같은 도구를 가린다.
 새 PC 구축이 아니라 기존 PC 에서 시험만 할 목적이라면 `-DryRun` 또는 `-SkipScoop` 을 쓸 것.
+
+기존 `$HOME\.gitconfig` 는 `.gitconfig.bak` 으로 백업된 뒤 덮어써진다.
+백업본에 있던 PC 고유 설정은 `~/.gitconfig.local` 로 옮겨야 한다.
