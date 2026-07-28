@@ -69,9 +69,20 @@ dotfiles/
 
 두 목록은 **중복되지 않는다.**
 
-- `scoop-apps.txt` — 관리자 권한 없이도 반드시 확보해야 하는 개발 툴체인
-  (`git`, `gh`, `nodejs-lts`, `python`, `temurin21-jdk`)
-- `winget-apps.json` — GUI 앱, 런타임, 관리자 권한이 필요한 항목
+- `scoop-apps.txt` — 관리자 권한 없이도 확보해야 하는 CLI 도구와 개발 런타임
+  (런타임 `git` `nodejs-lts` `python` `java/temurin21-jdk`,
+  버전 관리자 `nvm` `pyenv`, CLI `gh` `7zip` `sudo` `ripgrep` `fzf`)
+- `winget-apps.json` — GUI 앱, 시스템 통합 앱, 관리자 권한이 필요한 항목
+
+Chocolatey 는 제외했다. 대부분 관리자 권한을 요구해 권한 제한 환경에서 실패한다.
+
+`nvm` / `pyenv` 는 `nodejs-lts` / `python` 과 shim 이 겹쳐 나중에 설치된 쪽이 PATH 우선권을 갖는다.
+평소에는 최신 LTS 단일 버전을 쓰고, 프로젝트별 버전 요구가 생기면 아래로 전환한다.
+
+```powershell
+nvm install lts       ; nvm use lts
+pyenv install 3.13.0  ; pyenv global 3.13.0
+```
 
 Scoop 단계는 어떤 PC에서도 실행되므로, 툴체인은 winget 목록에서 제외했다.
 따라서 관리자 권한이 없는 PC에서도 개발은 바로 시작할 수 있다.
@@ -146,8 +157,15 @@ wsl --shutdown
 ```
 
 메모리가 16GB 미만인 PC 는 `memory` 값을 4GB 로 낮추는 것을 검토한다.
-그래도 부하가 해소되지 않으면 Podman 전환(`scoop install podman podman-compose`) 또는
-컨테이너를 원격/클라우드 서버에서 실행하는 방식을 고려한다.
+
+Docker 속도 저하의 나머지 원인과 대응은 아래와 같다.
+
+1. 바인드 마운트 I/O — 프로젝트를 Windows 경로(`C:\Users\...`) 대신
+   WSL 내부 경로(`\\wsl$\Ubuntu\home\...`)에 두면 파일시스템 호환성 문제를 회피할 수 있다.
+2. Vmmem 메모리 무제한 점유 — 위 `.wslconfig` 로 상한을 건다.
+3. 그래도 해소되지 않으면 Podman 전환(`scoop install podman`, `podman machine init/start`)
+   또는 컨테이너를 원격/클라우드 서버에서 실행하는 방식을 검토한다.
+   Docker Desktop 은 상업적 사용 시 유료 라이선스가 필요하다는 점도 함께 고려한다.
 
 ## 새 PC 검증 절차
 

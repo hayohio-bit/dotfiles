@@ -29,6 +29,7 @@ $manualApps = @(
         Name     = 'Orca (AI 에이전트 오케스트레이션)'
         WingetId = 'StablyAI.Orca'
         Url      = 'https://github.com/stablyai/orca/releases/latest'
+        AltUrl   = 'https://www.onorca.dev/download/started?platform=windows'
         Note     = 'winget 에 StablyAI.Orca 로 등록되어 있음. 무권한 PC 는 Releases 에서 직접 설치.'
     }
     [pscustomobject]@{
@@ -79,7 +80,8 @@ if ($pending.Count -eq 0) {
 foreach ($app in $pending) {
     Write-Host "    [필요] $($app.Name)" -ForegroundColor Yellow
     Write-Host "           $($app.Url)"
-    if ($app.Note) { Write-Host "           $($app.Note)" -ForegroundColor Gray }
+    if ($app.AltUrl) { Write-Host "           공식 다운로드: $($app.AltUrl)" }
+    if ($app.Note)   { Write-Host "           $($app.Note)" -ForegroundColor Gray }
 }
 
 if ($ListOnly) {

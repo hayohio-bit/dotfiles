@@ -67,6 +67,9 @@
 					"PackageIdentifier" : "Tailscale.Tailscale"
 				},
 				{
+					"PackageIdentifier" : "Google.Chrome"
+				},
+				{
 					"PackageIdentifier" : "Google.ChromeRemoteDesktopHost"
 				},
 				{
