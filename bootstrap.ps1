@@ -214,11 +214,52 @@ if (-not $SkipScoop) {
 
         if ($scoopEntries.Count -eq 0) { Write-Info '설치할 Scoop 항목이 없음' }
 
-        # 'bucket/package' 형식에서 필요한 버킷을 먼저 추가
-        $buckets = $scoopEntries |
-            Where-Object { $_ -like '*/*' } |
-            ForEach-Object { $_.Split('/')[0] } |
-            Sort-Object -Unique
+        # 'bucket/package' 형식에서 필요한 버킷을 추린다.
+        $buckets = @(
+            $scoopEntries |
+                Where-Object { $_ -like '*/*' } |
+                ForEach-Object { $_.Split('/')[0] } |
+                Sort-Object -Unique
+        )
+
+        # scoop 설치 직후에는 shims 가 PATH 에 없을 수 있다.
+        if (Get-Command scoop -ErrorAction SilentlyContinue) {
+            $shims = Join-Path $env:USERPROFILE 'scoop\shims'
+            if ((Test-Path $shims) -and ($env:Path -notlike "*$shims*")) {
+                $env:Path = "$shims;$env:Path"
+            }
+        }
+
+        # scoop bucket add 는 내부에서 git clone 을 쓰므로 git 이 없으면
+        # "Git is required for buckets" 로 실패한다. 새 PC 에는 git 이 없을 수 있으니
+        # 버킷을 추가하기 전에 git 을 먼저 설치한다. (main 버킷은 scoop 설치 시 함께 등록되어
+        # 있으므로 git 없이도 설치할 수 있다.)
+        $preInstalled = @()
+        if ($buckets.Count -gt 0 -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
+            $gitEntry = $scoopEntries | Where-Object { $_ -eq 'git' -or $_ -like '*/git' } | Select-Object -First 1
+
+            if ($DryRun) {
+                if ($gitEntry) { Write-Info "버킷 추가 전에 먼저 설치 예정: $gitEntry (버킷 추가에 git 필요)" }
+                else           { Write-Info '경고 예정: git 이 없어 버킷 추가가 실패할 수 있음' }
+            }
+            elseif ($gitEntry) {
+                try {
+                    Write-Info "버킷 추가에 git 이 필요하므로 먼저 설치: $gitEntry"
+                    scoop install $gitEntry
+                    if ($LASTEXITCODE -ne 0) { throw "scoop 종료 코드 $LASTEXITCODE" }
+                    $shims = Join-Path $env:USERPROFILE 'scoop\shims'
+                    if ($env:Path -notlike "*$shims*") { $env:Path = "$shims;$env:Path" }
+                    $preInstalled += $gitEntry
+                    Write-Ok $gitEntry
+                }
+                catch {
+                    Write-Fail "git 선행 설치 실패: $($_.Exception.Message) / 버킷 추가가 실패할 수 있음"
+                }
+            }
+            else {
+                Write-Fail 'git 이 없고 목록에도 없어 버킷 추가가 실패할 수 있음'
+            }
+        }
 
         foreach ($bucket in $buckets) {
             if ($DryRun) { Write-Info "버킷 추가 예정: $bucket"; continue }
@@ -228,15 +269,18 @@ if (-not $SkipScoop) {
                     Write-Ok "버킷 이미 등록됨: $bucket"
                 } else {
                     scoop bucket add $bucket
+                    # add_bucket 은 실패해도 예외를 던지지 않고 종료 코드로만 알린다.
+                    if ($LASTEXITCODE -ne 0) { throw "scoop 종료 코드 $LASTEXITCODE" }
                     Write-Ok "버킷 추가: $bucket"
                 }
             }
             catch {
-                Write-Fail "버킷 추가 실패: $bucket / $($_.Exception.Message)"
+                Write-Fail "버킷 추가 실패: $bucket / $($_.Exception.Message) / 이 버킷의 패키지는 설치되지 않음"
             }
         }
 
         foreach ($app in $scoopEntries) {
+            if ($preInstalled -contains $app) { continue }
             if ($DryRun) { Write-Info "설치 예정: $app"; continue }
             try {
                 Write-Info "설치: $app"
