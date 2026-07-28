@@ -97,6 +97,16 @@ powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -DryRun
 powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1
 ```
 
+목록 전체가 아니라 **설치할 항목을 직접 고르고 싶으면** `-Select` 를 붙인다.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\bootstrap.ps1 -Select
+```
+
+방향키로 이동하고 Space 로 선택/해제한 뒤 Enter 로 확정한다.
+이미 설치된 항목은 자동으로 해제 상태로 표시되므로, 그대로 Enter 를 누르면
+빠진 것만 설치된다. 자세한 조작은 아래 [설치 항목 선택 화면](#설치-항목-선택-화면) 참고.
+
 실행 중 UAC 창이 여러 번 뜰 수 있다. 모두 허용한다.
 개별 앱이 실패해도 `[WARN]` 으로 기록하고 다음 앱으로 넘어가며, 마지막에 경고가 모여 출력된다.
 
@@ -280,12 +290,61 @@ bootstrap 은 덮어쓰기 전 `$HOME\.gitconfig.bak` 으로 백업한다.
 
 # 참고 자료
 
+## 설치 항목 선택 화면
+
+`-Select` 를 붙이면 설치 전에 체크박스 화면이 뜬다.
+
+```
+  설치할 항목을 선택하세요
+  ↑↓ 이동   Space 선택/해제   A 전체   N 전체해제   Enter 확인   Esc 취소
+
+  ── 런타임 ──────────────────────────────────
+  > [x] git
+    [x] nodejs-lts
+    [x] python
+    [x] temurin21-jdk
+  ── 버전 관리자 ──────────────────────────────
+    [ ] nvm
+    [ ] pyenv
+  ── winget (관리자 권한 필요) ─────────────────
+    [ ] Google.Antigravity           이미 설치됨
+    [x] Google.Chrome
+
+  (1-20 / 42 행 표시 중)
+  선택됨 12 / 38
+```
+
+| 키 | 동작 |
+|---|---|
+| `↑` `↓` | 항목 이동 |
+| `PageUp` `PageDown` | 한 화면씩 이동 |
+| `Home` `End` | 처음 / 마지막 항목 |
+| `Space` | 선택 / 해제 |
+| `A` | 전체 선택 |
+| `N` | 전체 해제 |
+| `Enter` | 확정하고 설치 진행 |
+| `Esc` 또는 `Q` | 취소 (아무것도 변경하지 않고 종료) |
+
+화면을 띄우기 전에 현재 설치 상태를 조회한다(`scoop list` + `winget export`, 수 초 소요).
+**이미 설치된 항목은 기본 해제 상태**로 표시되므로, 아무것도 건드리지 않고 Enter 만 눌러도
+누락된 것만 설치된다.
+
+`scoop-apps.txt` 의 `#>` 로 시작하는 줄이 그룹 구분선이 된다. 그룹을 바꾸려면 그 줄을 수정한다.
+
+선택 결과는 Scoop 은 고른 패키지만 순차 설치하고,
+winget 은 고른 패키지만 담은 임시 목록 파일을 만들어 `winget import` 에 넘긴 뒤 삭제한다.
+
+입력이 리다이렉트된 환경(자동화, 파이프)에서는 화면을 띄우지 않고
+경고를 남긴 뒤 미설치 항목 전체를 선택한다. 무인 실행이 멈추지 않도록 하기 위한 동작이다.
+
 ## 리포지토리 구조
 
 ```
 dotfiles/
 ├── bootstrap.ps1            # 메인 진입점
 ├── install-manual-apps.ps1  # 패키지 매니저로 설치되지 않는 앱 안내
+├── lib/
+│   └── Select-Packages.ps1  # -Select 선택 화면 (외부 모듈 의존 없음)
 ├── apps/
 │   ├── scoop-apps.txt       # Scoop 설치 목록 (무권한)
 │   └── winget-apps.json     # winget import 용 목록 (관리자 권한)
@@ -312,6 +371,7 @@ dotfiles/
 
 | 옵션 | 설명 |
 |---|---|
+| `-Select` | 설치할 항목을 체크박스 화면에서 직접 선택 |
 | `-DryRun` | 실제 변경 없이 수행할 작업만 출력 |
 | `-SkipScoop` | Scoop 단계 생략 |
 | `-SkipWinget` | winget 단계 생략 |

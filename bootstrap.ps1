@@ -12,6 +12,11 @@
     Scoop 단계는 항상 실행되고, winget 단계는 winget 이 있을 때만 실행된다.
     두 목록은 서로 중복되지 않는다. 개별 앱 설치 실패는 경고로 처리하고 전체를 중단하지 않는다.
 
+.PARAMETER Select
+    설치 전에 체크박스 선택 화면을 띄워 설치할 항목만 고른다.
+    이미 설치된 항목은 기본 해제 상태로 표시된다.
+    입력이 리다이렉트된 환경에서는 화면을 건너뛰고 미설치 항목 전체를 선택한다.
+
 .PARAMETER SkipScoop
     Scoop 설치 단계를 건너뛴다.
 
@@ -37,6 +42,10 @@
     전체 실행. winget 단계는 관리자 권한 PowerShell 을 권장한다.
 
 .EXAMPLE
+    .\bootstrap.ps1 -Select
+    선택 화면에서 설치할 항목만 고른 뒤 진행한다.
+
+.EXAMPLE
     .\bootstrap.ps1 -DryRun
     아무것도 설치하지 않고 실행 계획만 확인한다.
 
@@ -46,6 +55,7 @@
 #>
 [CmdletBinding()]
 param(
+    [switch]$Select,
     [switch]$SkipScoop,
     [switch]$SkipWinget,
     [switch]$SkipConfigs,
@@ -103,6 +113,58 @@ Write-Host "  설정 대상     : $HomePath"
 if ($DryRun) { Write-Host "  실행 모드     : DRY RUN (실제 변경 없음)" -ForegroundColor Magenta }
 
 # ---------------------------------------------------------------------------
+# 0-1. 설치 항목 선택 (-Select)
+# ---------------------------------------------------------------------------
+# $null 이면 목록 파일 전체를 그대로 쓴다. 배열이면 선택된 항목만 설치한다.
+$selectedScoop  = $null
+$selectedWinget = $null
+
+if ($Select) {
+    Write-Step '0. 설치 항목 선택'
+
+    $pickerScript = Join-Path $PSScriptRoot 'lib\Select-Packages.ps1'
+    if (-not (Test-Path $pickerScript)) {
+        Write-Fail "선택기 없음: $pickerScript / 목록 전체로 진행"
+    }
+    else {
+        . $pickerScript
+
+        $candidates = @()
+        if (-not $SkipScoop  -and (Test-Path $scoopList))  { $candidates += Read-ScoopAppList  -Path $scoopList }
+        if (-not $SkipWinget -and (Test-Path $wingetList)) { $candidates += Read-WingetAppList -Path $wingetList }
+
+        if ($candidates.Count -eq 0) {
+            Write-Fail '선택할 항목이 없음 / 목록 전체로 진행'
+        }
+        else {
+            Write-Info '현재 설치 상태 확인 중... (winget export 때문에 20초 정도 걸릴 수 있음)'
+            $installedScoop  = Get-InstalledScoopId
+            $installedWinget = Get-InstalledWingetId
+
+            foreach ($candidate in $candidates) {
+                $isInstalled = if ($candidate.Manager -eq 'scoop') {
+                    $installedScoop.Contains($candidate.Name)
+                } else {
+                    $installedWinget.Contains($candidate.Id)
+                }
+                $candidate | Add-Member -NotePropertyName Installed -NotePropertyValue $isInstalled -Force
+            }
+
+            $picked = Show-PackagePicker -Items $candidates
+            if ($null -eq $picked) {
+                Write-Host ""
+                Write-Host "선택이 취소되었습니다. 아무것도 변경하지 않고 종료합니다." -ForegroundColor Yellow
+                return
+            }
+
+            $selectedScoop  = @($picked | Where-Object { $_.Manager -eq 'scoop'  } | ForEach-Object { $_.Id })
+            $selectedWinget = @($picked | Where-Object { $_.Manager -eq 'winget' } | ForEach-Object { $_.Id })
+            Write-Ok "선택 완료: Scoop $($selectedScoop.Count) 개 / winget $($selectedWinget.Count) 개"
+        }
+    }
+}
+
+# ---------------------------------------------------------------------------
 # 1. Scoop 설치 (관리자 권한 불필요)
 # ---------------------------------------------------------------------------
 if (-not $SkipScoop) {
@@ -138,10 +200,19 @@ if (-not $SkipScoop) {
         Write-Fail 'Scoop 을 사용할 수 없어 Scoop 앱 설치를 건너뜀'
     }
     else {
-        # 주석/빈 줄 제거
-        $scoopEntries = Get-Content $scoopList -Encoding UTF8 |
-            ForEach-Object { $_.Trim() } |
-            Where-Object { $_ -and -not $_.StartsWith('#') }
+        # 선택 화면을 거쳤으면 고른 항목만, 아니면 목록 전체(주석/빈 줄 제거)를 쓴다.
+        # '#>' 로 시작하는 그룹 머리글도 '#' 조건에 함께 걸러진다.
+        $scoopEntries = @(
+            if ($null -ne $selectedScoop) {
+                $selectedScoop
+            } else {
+                Get-Content $scoopList -Encoding UTF8 |
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { $_ -and -not $_.StartsWith('#') }
+            }
+        )
+
+        if ($scoopEntries.Count -eq 0) { Write-Info '설치할 Scoop 항목이 없음' }
 
         # 'bucket/package' 형식에서 필요한 버킷을 먼저 추가
         $buckets = $scoopEntries |
@@ -198,15 +269,46 @@ if (-not $SkipWinget) {
     elseif (-not (Test-Path $wingetList)) {
         Write-Fail "목록 파일 없음: $wingetList"
     }
+    elseif ($null -ne $selectedWinget -and $selectedWinget.Count -eq 0) {
+        Write-Info '선택된 winget 항목이 없어 건너뜀'
+    }
     elseif ($DryRun) {
-        $count = (Get-Content $wingetList -Raw | ConvertFrom-Json).Sources[0].Packages.Count
-        $mode  = if ($UpgradeExisting) { '이미 설치된 앱도 최신 버전으로 갱신' } else { '이미 설치된 앱은 건너뜀' }
-        Write-Info "winget import 예정: $wingetList ($count 개 패키지, $mode)"
+        $count = if ($null -ne $selectedWinget) {
+            $selectedWinget.Count
+        } else {
+            (Get-Content $wingetList -Raw | ConvertFrom-Json).Sources[0].Packages.Count
+        }
+        $mode = if ($UpgradeExisting) { '이미 설치된 앱도 최신 버전으로 갱신' } else { '이미 설치된 앱은 건너뜀' }
+        Write-Info "winget import 예정: $count 개 패키지, $mode"
     }
     else {
         if (-not $isAdmin) {
             Write-Fail '관리자 권한이 아님. 일부 앱이 UAC 프롬프트를 띄우거나 실패할 수 있음'
         }
+
+        # winget import 는 파일 단위로만 동작하므로, 선택 화면을 거친 경우
+        # 고른 패키지만 담은 임시 목록 파일을 만들어 넘긴다.
+        $importFile = $wingetList
+        $tempImport = $null
+        if ($null -ne $selectedWinget) {
+            $source = (Get-Content $wingetList -Raw | ConvertFrom-Json).Sources[0]
+            $subset = [ordered]@{
+                '$schema'     = 'https://aka.ms/winget-packages.schema.2.0.json'
+                CreationDate  = '2026-01-01T00:00:00.000-00:00'
+                Sources       = @(
+                    [ordered]@{
+                        Packages      = @($selectedWinget | ForEach-Object { @{ PackageIdentifier = $_ } })
+                        SourceDetails = $source.SourceDetails
+                    }
+                )
+                WinGetVersion = '1.0.0'
+            }
+            $tempImport = Join-Path ([IO.Path]::GetTempPath()) ("winget-selected-{0}.json" -f [Guid]::NewGuid())
+            $subset | ConvertTo-Json -Depth 10 | Set-Content -Path $tempImport -Encoding UTF8
+            $importFile = $tempImport
+            Write-Info "선택된 $($selectedWinget.Count) 개 패키지로 import 진행"
+        }
+
         # winget import 는 기본적으로 이미 설치된 앱도 다시 내려받아 재설치한다.
         # --no-upgrade 를 주면 설치된 버전이 있을 때 건너뛰므로 재실행이 안전해진다.
         # 목록의 앱을 최신으로 올리려면 -UpgradeExisting 을 지정한다.
@@ -219,7 +321,7 @@ if (-not $SkipWinget) {
         if (-not $UpgradeExisting) { $importArgs += '--no-upgrade' }
 
         try {
-            winget import -i $wingetList @importArgs
+            winget import -i $importFile @importArgs
             if ($LASTEXITCODE -eq 0) {
                 Write-Ok 'winget import 완료'
             } else {
@@ -228,6 +330,9 @@ if (-not $SkipWinget) {
         }
         catch {
             Write-Fail "winget import 실패: $($_.Exception.Message)"
+        }
+        finally {
+            if ($tempImport) { Remove-Item $tempImport -Force -ErrorAction SilentlyContinue }
         }
     }
 }
