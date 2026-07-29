@@ -205,6 +205,8 @@ Docker Desktop 은 최초 실행 시 로그인과 추가 구성 요소 설치를
 ## 7단계. 마무리 점검
 
 - [ ] `git --version` / `node -v` / `python --version` / `java -version` 모두 응답
+- [ ] `rustc --version` 응답 (안 되면 `rustup default stable`)
+- [ ] MSVC 워크로드 확인 — bootstrap 2-1 단계가 `구성 요소 확인 완료` 로 끝났는지
 - [ ] `$HOME\.gitconfig`, `$HOME\.wslconfig` 존재
 - [ ] 필요 시 `$HOME\.gitconfig.local` 작성 완료
 - [ ] Antigravity 실행 및 Google 계정 로그인
@@ -245,6 +247,41 @@ $env:Path = "$env:USERPROFILE\scoop\shims;$env:Path"
 
 ```powershell
 winget install --id <패키지ID> -e --accept-package-agreements --accept-source-agreements
+```
+
+### Rust 나 `npm install` 이 `link.exe not found` 로 실패
+
+Visual Studio Build Tools 는 설치되었지만 **MSVC 워크로드가 빠진** 상태다.
+아래로 실제 구성 요소가 있는지 확인한다.
+
+```powershell
+& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe" `
+  -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+```
+
+아무것도 출력되지 않으면 워크로드가 없는 것이다. bootstrap 의 2-1 단계를 다시 실행하거나,
+관리자 PowerShell 에서 직접 추가한다.
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools -e `
+  --override "--quiet --wait --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+Build Tools 가 이미 설치되어 있어 winget 이 `already installed` 로 건너뛴다면 구성 요소만 추가한다.
+
+```powershell
+& "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe" modify `
+  --installPath "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools" `
+  --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended --quiet --wait --norestart
+```
+
+### `rustc` 명령을 찾을 수 없음
+
+`Rustlang.Rustup` 은 rustup 만 설치하고 툴체인은 별도로 받아야 할 수 있다.
+
+```powershell
+rustup default stable
+rustc --version
 ```
 
 ### `winget 을 찾을 수 없음`
@@ -347,7 +384,8 @@ dotfiles/
 │   └── Select-Packages.ps1  # -Select 선택 화면 (외부 모듈 의존 없음)
 ├── apps/
 │   ├── scoop-apps.txt       # Scoop 설치 목록 (무권한)
-│   └── winget-apps.json     # winget import 용 목록 (관리자 권한)
+│   ├── winget-apps.json     # winget import 용 목록 (관리자 권한)
+│   └── winget-overrides.json # import 로 안 되는 개별 설치 목록
 ├── configs/
 │   ├── .gitconfig           # -> $HOME\.gitconfig
 │   └── .wslconfig           # -> $HOME\.wslconfig
@@ -361,6 +399,7 @@ dotfiles/
 | 0 | 실행 정책을 `RemoteSigned`(CurrentUser)로 설정하고 하위 `.ps1` 을 `Unblock-File` 처리 |
 | 1 | Scoop 미설치 시 설치 → 필요한 버킷 추가 → `apps/scoop-apps.txt` 순차 설치 |
 | 2 | `winget import`로 `apps/winget-apps.json` 일괄 설치 |
+| 2-1 | `apps/winget-overrides.json` 의 패키지를 `--override` 를 붙여 개별 설치 |
 | 3 | `configs/` 의 설정 파일을 `$HOME` 에 복사 (기존 파일은 `.bak` 으로 백업) |
 | 4 | `install-manual-apps.ps1` 실행 |
 | 5 | 누적된 경고 요약 출력 |
@@ -393,6 +432,32 @@ dotfiles/
   (런타임 `git` `nodejs-lts` `python` `java/temurin21-jdk`,
   버전 관리자 `nvm` `pyenv`, CLI `gh` `7zip` `sudo` `ripgrep` `fzf`)
 - `winget-apps.json` — GUI 앱, 시스템 통합 앱, 관리자 권한이 필요한 항목
+- `winget-overrides.json` — `winget import` 로는 온전히 설치되지 않아
+  개별 설치가 필요한 항목 (아래 참고)
+
+### winget-overrides.json 이 따로 있는 이유
+
+`winget import` 는 **패키지별 `--override` 를 지원하지 않는다.** 설치 관리자에 인자를
+넘겨야 구성 요소가 결정되는 패키지를 `winget-apps.json` 에 넣으면, 설치 관리자만 깔린 채로
+winget 기준 '설치됨' 상태가 된다. 겉보기에는 성공이지만 실제 컴파일러는 없다.
+
+Visual Studio Build Tools 가 이 경우에 해당한다. 워크로드를 지정하지 않으면 MSVC 컴파일러와
+링커가 빠지고, 나중에 Rust 빌드나 `npm install`(네이티브 모듈)이 `link.exe not found` 로 실패한다.
+그래서 이 패키지는 import 목록에서 제외하고 `winget-overrides.json` 에 두어
+`--add Microsoft.VisualStudio.Workload.VCTools` 를 명시해 설치한다.
+
+설치 완료 판정도 winget 이 아니라 `vswhere.exe` 로 실제 구성 요소 존재 여부를 확인한다.
+제품은 이미 있고 구성 요소만 빠진 상태라면 `winget install` 이 `already installed` 로 건너뛰므로,
+이 경우에는 `vs_installer.exe modify` 로 구성 요소만 추가한다.
+
+같은 성격의 패키지가 생기면 `Packages` 배열에 항목을 추가한다.
+
+| 필드 | 설명 |
+|---|---|
+| `PackageIdentifier` | winget 패키지 ID |
+| `Override` | 설치 관리자에 그대로 전달할 인자 문자열 |
+| `RequiresComponent` | (선택) 설치 완료 판정에 쓸 Visual Studio 구성 요소 ID |
+| `Reason` | 왜 필요한지. 선택 화면과 로그에 표시된다 |
 
 Scoop 단계는 어떤 PC에서도 실행되므로, 툴체인은 winget 목록에서 제외했다.
 따라서 관리자 권한이 없는 PC에서도 개발은 바로 시작할 수 있다.
@@ -428,6 +493,8 @@ winget export -o apps\winget-apps.json
 - Scoop 이 담당하는 툴체인 — `Git.Git`, `GitHub.cli`, `OpenJS.NodeJS`,
   `Python.Python.*`, `Python.Launcher`, `Microsoft.OpenJDK.*`
 - `winget export` 실행 중 `not available from any source` 경고가 뜬 Windows 내장 구성요소 전반
+- `Microsoft.VisualStudio.2022.BuildTools` — `winget-overrides.json` 이 담당한다.
+  import 목록에 남겨두면 구성 요소 없이 설치되므로 반드시 제거한다.
 
 Scoop 목록을 갱신하려면 `apps/scoop-apps.txt` 에 한 줄씩 추가한다.
 기본 버킷(main) 외의 패키지는 `버킷명/패키지명` 형식으로 적는다.
@@ -439,6 +506,8 @@ Scoop 목록을 갱신하려면 `apps/scoop-apps.txt` 에 한 줄씩 추가한�
 | Java | 21 (`java/temurin21-jdk`) |
 | Node.js | 최신 LTS (`nodejs-lts`) |
 | Python | 최신 안정판 (`python`) |
+| Rust | rustup 으로 관리 (`Rustlang.Rustup`) |
+| C/C++ 빌드 | VS 2022 Build Tools + VCTools 워크로드 |
 | Git user.name | serena |
 | Git user.email | 239265396+hayohio-bit@users.noreply.github.com |
 | IDE | Antigravity (`Google.Antigravity`, `Google.AntigravityIDE`) |

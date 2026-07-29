@@ -12,6 +12,10 @@
     Scoop 단계는 항상 실행되고, winget 단계는 winget 이 있을 때만 실행된다.
     두 목록은 서로 중복되지 않는다. 개별 앱 설치 실패는 경고로 처리하고 전체를 중단하지 않는다.
 
+    winget import 는 패키지별 --override 를 지원하지 않으므로, 설치 관리자에 인자를
+    넘겨야 하는 패키지(Visual Studio Build Tools 등)는 apps/winget-overrides.json 에
+    따로 두고 import 이후 개별 설치한다.
+
 .PARAMETER Select
     설치 전에 체크박스 선택 화면을 띄워 설치할 항목만 고른다.
     이미 설치된 항목은 기본 해제 상태로 표시된다.
@@ -99,11 +103,20 @@ function Test-Administrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
-$isAdmin     = Test-Administrator
-$appsDir     = Join-Path $PSScriptRoot 'apps'
-$configsDir  = Join-Path $PSScriptRoot 'configs'
-$scoopList   = Join-Path $appsDir 'scoop-apps.txt'
-$wingetList  = Join-Path $appsDir 'winget-apps.json'
+$isAdmin        = Test-Administrator
+$appsDir        = Join-Path $PSScriptRoot 'apps'
+$configsDir     = Join-Path $PSScriptRoot 'configs'
+$scoopList      = Join-Path $appsDir 'scoop-apps.txt'
+$wingetList     = Join-Path $appsDir 'winget-apps.json'
+$overrideList   = Join-Path $appsDir 'winget-overrides.json'
+
+# lib 는 -Select 화면뿐 아니라 winget 개별 설치 단계에서도 쓰이므로 항상 읽어둔다.
+$libLoaded    = $false
+$pickerScript = Join-Path $PSScriptRoot 'lib\Select-Packages.ps1'
+if (Test-Path $pickerScript) {
+    . $pickerScript
+    $libLoaded = $true
+}
 
 Write-Host ""
 Write-Host "개발환경 자동 구축 시작" -ForegroundColor White
@@ -116,22 +129,21 @@ if ($DryRun) { Write-Host "  실행 모드     : DRY RUN (실제 변경 없음)"
 # 0-1. 설치 항목 선택 (-Select)
 # ---------------------------------------------------------------------------
 # $null 이면 목록 파일 전체를 그대로 쓴다. 배열이면 선택된 항목만 설치한다.
-$selectedScoop  = $null
-$selectedWinget = $null
+$selectedScoop    = $null
+$selectedWinget   = $null
+$selectedOverride = $null
 
 if ($Select) {
     Write-Step '0. 설치 항목 선택'
 
-    $pickerScript = Join-Path $PSScriptRoot 'lib\Select-Packages.ps1'
-    if (-not (Test-Path $pickerScript)) {
+    if (-not $libLoaded) {
         Write-Fail "선택기 없음: $pickerScript / 목록 전체로 진행"
     }
     else {
-        . $pickerScript
-
         $candidates = @()
-        if (-not $SkipScoop  -and (Test-Path $scoopList))  { $candidates += Read-ScoopAppList  -Path $scoopList }
-        if (-not $SkipWinget -and (Test-Path $wingetList)) { $candidates += Read-WingetAppList -Path $wingetList }
+        if (-not $SkipScoop  -and (Test-Path $scoopList))    { $candidates += Read-ScoopAppList       -Path $scoopList }
+        if (-not $SkipWinget -and (Test-Path $wingetList))   { $candidates += Read-WingetAppList      -Path $wingetList }
+        if (-not $SkipWinget -and (Test-Path $overrideList)) { $candidates += Read-WingetOverrideList -Path $overrideList }
 
         if ($candidates.Count -eq 0) {
             Write-Fail '선택할 항목이 없음 / 목록 전체로 진행'
@@ -142,10 +154,10 @@ if ($Select) {
             $installedWinget = Get-InstalledWingetId
 
             foreach ($candidate in $candidates) {
-                $isInstalled = if ($candidate.Manager -eq 'scoop') {
-                    $installedScoop.Contains($candidate.Name)
-                } else {
-                    $installedWinget.Contains($candidate.Id)
+                $isInstalled = switch ($candidate.Manager) {
+                    'scoop'           { $installedScoop.Contains($candidate.Name) }
+                    'winget-override' { Test-WingetOverrideInstalled -Item $candidate -InstalledWinget $installedWinget }
+                    default           { $installedWinget.Contains($candidate.Id) }
                 }
                 $candidate | Add-Member -NotePropertyName Installed -NotePropertyValue $isInstalled -Force
             }
@@ -157,9 +169,11 @@ if ($Select) {
                 return
             }
 
-            $selectedScoop  = @($picked | Where-Object { $_.Manager -eq 'scoop'  } | ForEach-Object { $_.Id })
-            $selectedWinget = @($picked | Where-Object { $_.Manager -eq 'winget' } | ForEach-Object { $_.Id })
-            Write-Ok "선택 완료: Scoop $($selectedScoop.Count) 개 / winget $($selectedWinget.Count) 개"
+            $selectedScoop    = @($picked | Where-Object { $_.Manager -eq 'scoop'  } | ForEach-Object { $_.Id })
+            $selectedWinget   = @($picked | Where-Object { $_.Manager -eq 'winget' } | ForEach-Object { $_.Id })
+            # 개별 설치 항목은 Override 문자열이 필요하므로 ID 가 아니라 객체를 그대로 넘긴다.
+            $selectedOverride = @($picked | Where-Object { $_.Manager -eq 'winget-override' })
+            Write-Ok "선택 완료: Scoop $($selectedScoop.Count) 개 / winget $($selectedWinget.Count) 개 / 개별 설치 $($selectedOverride.Count) 개"
         }
     }
 }
@@ -320,7 +334,7 @@ if (-not $SkipWinget) {
         $count = if ($null -ne $selectedWinget) {
             $selectedWinget.Count
         } else {
-            (Get-Content $wingetList -Raw | ConvertFrom-Json).Sources[0].Packages.Count
+            (Get-Content $wingetList -Raw -Encoding UTF8 | ConvertFrom-Json).Sources[0].Packages.Count
         }
         $mode = if ($UpgradeExisting) { '이미 설치된 앱도 최신 버전으로 갱신' } else { '이미 설치된 앱은 건너뜀' }
         Write-Info "winget import 예정: $count 개 패키지, $mode"
@@ -335,7 +349,7 @@ if (-not $SkipWinget) {
         $importFile = $wingetList
         $tempImport = $null
         if ($null -ne $selectedWinget) {
-            $source = (Get-Content $wingetList -Raw | ConvertFrom-Json).Sources[0]
+            $source = (Get-Content $wingetList -Raw -Encoding UTF8 | ConvertFrom-Json).Sources[0]
             $subset = [ordered]@{
                 '$schema'     = 'https://aka.ms/winget-packages.schema.2.0.json'
                 CreationDate  = '2026-01-01T00:00:00.000-00:00'
@@ -348,7 +362,13 @@ if (-not $SkipWinget) {
                 WinGetVersion = '1.0.0'
             }
             $tempImport = Join-Path ([IO.Path]::GetTempPath()) ("winget-selected-{0}.json" -f [Guid]::NewGuid())
-            $subset | ConvertTo-Json -Depth 10 | Set-Content -Path $tempImport -Encoding UTF8
+            # PowerShell 5.1 의 Set-Content -Encoding UTF8 은 BOM 을 붙인다.
+            # winget 에 넘길 파일이므로 BOM 없는 UTF-8 로 쓴다.
+            [IO.File]::WriteAllText(
+                $tempImport,
+                ($subset | ConvertTo-Json -Depth 10),
+                (New-Object Text.UTF8Encoding $false)
+            )
             $importFile = $tempImport
             Write-Info "선택된 $($selectedWinget.Count) 개 패키지로 import 진행"
         }
@@ -382,6 +402,116 @@ if (-not $SkipWinget) {
 }
 else {
     Write-Step '2. winget (건너뜀)'
+}
+
+# ---------------------------------------------------------------------------
+# 2-1. winget 개별 설치 (설치 관리자에 인자를 넘겨야 하는 패키지)
+# ---------------------------------------------------------------------------
+# winget import 는 패키지별 --override 를 지원하지 않는다. Build Tools 를 import 로
+# 설치하면 설치 관리자만 깔리고 컴파일러/링커가 빠진 채로 '설치됨'이 되어,
+# 나중에 Rust 나 node-gyp 빌드가 link.exe 를 못 찾고 실패한다.
+# 그래서 이런 패키지는 목록에서 분리해 여기서 구성 요소를 명시해 설치한다.
+if (-not $SkipWinget) {
+    Write-Step '2-1. winget 개별 설치'
+
+    if (-not $libLoaded) {
+        Write-Fail "lib 를 읽지 못해 개별 설치를 건너뜀: $pickerScript"
+    }
+    elseif (-not (Test-Path $overrideList)) {
+        Write-Info "개별 설치 목록 없음: $overrideList / 건너뜀"
+    }
+    elseif (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
+        Write-Fail 'winget 을 찾을 수 없어 개별 설치를 건너뜀'
+    }
+    else {
+        # 선택 화면을 거쳤으면 고른 것만, 아니면 목록 전체.
+        $overrideEntries = @(
+            if ($null -ne $selectedOverride) { $selectedOverride }
+            else                             { Read-WingetOverrideList -Path $overrideList }
+        )
+
+        if ($overrideEntries.Count -eq 0) { Write-Info '개별 설치할 항목이 없음' }
+
+        foreach ($package in $overrideEntries) {
+            # 구분자로 em dash 를 쓰면 콘솔 코드페이지에 따라 '?' 로 깨진다.
+            if ($package.Reason) { Write-Info "$($package.Id) : $($package.Reason)" }
+
+            # winget 기준 '설치됨'이 아니라 구성 요소 존재 여부로 판정한다.
+            $alreadyUsable = $false
+            if ($package.RequiresComponent) {
+                $alreadyUsable = Test-VsComponent -ComponentId $package.RequiresComponent
+            }
+
+            if ($alreadyUsable -and -not $UpgradeExisting) {
+                Write-Ok "$($package.Id) 구성 요소 확인됨 ($($package.RequiresComponent))"
+                continue
+            }
+
+            if ($DryRun) {
+                if ($package.RequiresComponent -and -not $alreadyUsable) {
+                    Write-Info "구성 요소 누락 확인 -> 설치 예정: $($package.Id)"
+                } else {
+                    Write-Info "설치 예정: $($package.Id)"
+                }
+                Write-Info "  override: $($package.Override)"
+                continue
+            }
+
+            if (-not $isAdmin) {
+                Write-Fail "$($package.Id) 설치에는 관리자 권한이 필요함. UAC 프롬프트가 뜨거나 실패할 수 있음"
+            }
+
+            try {
+                # 제품이 이미 있고 구성 요소만 빠진 경우, winget install 은
+                # 'already installed' 로 건너뛰므로 VS 설치 관리자로 직접 수정한다.
+                $installPath = $null
+                if ($package.Id -like 'Microsoft.VisualStudio.*.BuildTools') {
+                    $installPath = Get-VsInstallPath
+                }
+
+                if ($installPath) {
+                    $vsInstaller = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vs_installer.exe'
+                    Write-Info "이미 설치된 제품에 구성 요소 추가: $installPath"
+                    $modifyArgs = @(
+                        'modify'
+                        '--installPath', $installPath
+                        '--add', 'Microsoft.VisualStudio.Workload.VCTools'
+                        '--includeRecommended'
+                        '--quiet', '--wait', '--norestart'
+                    )
+                    $proc = Start-Process -FilePath $vsInstaller -ArgumentList $modifyArgs -Wait -PassThru
+                    # 3010 = 성공했으나 재부팅 필요
+                    if ($proc.ExitCode -notin @(0, 3010)) { throw "vs_installer 종료 코드 $($proc.ExitCode)" }
+                    if ($proc.ExitCode -eq 3010) { Write-Info '재부팅이 필요한 상태로 완료됨' }
+                }
+                else {
+                    Write-Info "설치: $($package.Id)"
+                    winget install --id $package.Id -e `
+                        --accept-package-agreements --accept-source-agreements `
+                        --disable-interactivity `
+                        --override $package.Override
+                    if ($LASTEXITCODE -ne 0) { throw "winget 종료 코드 $LASTEXITCODE" }
+                }
+
+                # 설치 후 실제로 구성 요소가 들어갔는지 재확인한다.
+                if ($package.RequiresComponent) {
+                    if (Test-VsComponent -ComponentId $package.RequiresComponent) {
+                        Write-Ok "$($package.Id) (구성 요소 확인 완료)"
+                    } else {
+                        Write-Fail "$($package.Id) 설치는 끝났으나 구성 요소를 찾지 못함: $($package.RequiresComponent)"
+                    }
+                } else {
+                    Write-Ok $package.Id
+                }
+            }
+            catch {
+                Write-Fail "개별 설치 실패: $($package.Id) / $($_.Exception.Message) / 계속 진행"
+            }
+        }
+    }
+}
+else {
+    Write-Step '2-1. winget 개별 설치 (건너뜀)'
 }
 
 # ---------------------------------------------------------------------------

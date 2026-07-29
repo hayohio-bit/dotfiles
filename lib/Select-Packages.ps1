@@ -9,11 +9,13 @@
     Windows PowerShell 5.1 과 PowerShell 7 양쪽에서 동작한다.
 
     노출하는 함수:
-      Get-InstalledScoopId    설치된 Scoop 패키지 이름 집합
-      Get-InstalledWingetId   설치된 winget 패키지 ID 집합
-      Read-ScoopAppList       apps/scoop-apps.txt 를 그룹 정보와 함께 읽는다
-      Read-WingetAppList      apps/winget-apps.json 을 읽는다
-      Show-PackagePicker      선택 화면을 띄우고 선택된 항목을 돌려준다
+      Get-InstalledScoopId      설치된 Scoop 패키지 이름 집합
+      Get-InstalledWingetId     설치된 winget 패키지 ID 집합
+      Test-VsComponent          Visual Studio 구성 요소 설치 여부 (vswhere)
+      Read-ScoopAppList         apps/scoop-apps.txt 를 그룹 정보와 함께 읽는다
+      Read-WingetAppList        apps/winget-apps.json 을 읽는다
+      Read-WingetOverrideList   apps/winget-overrides.json 을 읽는다
+      Show-PackagePicker        선택 화면을 띄우고 선택된 항목을 돌려준다
 #>
 
 # ---------------------------------------------------------------------------
@@ -46,7 +48,9 @@ function Get-InstalledWingetId {
     try {
         winget export -o $temp --accept-source-agreements 1>$null 2>$null
         if (Test-Path $temp) {
-            $json = Get-Content $temp -Raw | ConvertFrom-Json
+            # -Encoding UTF8 은 필수다. PowerShell 5.1 의 Get-Content 기본값은 ANSI(CP949)라
+            # 한글이 섞인 JSON 을 읽으면 깨져서 ConvertFrom-Json 이 실패한다.
+            $json = Get-Content $temp -Raw -Encoding UTF8 | ConvertFrom-Json
             foreach ($source in $json.Sources) {
                 foreach ($package in $source.Packages) {
                     if ($package.PackageIdentifier) { [void]$result.Add([string]$package.PackageIdentifier) }
@@ -61,6 +65,56 @@ function Get-InstalledWingetId {
         Remove-Item $temp -Force -ErrorAction SilentlyContinue
     }
     return ,$result
+}
+
+function Test-VsComponent {
+    <#
+    .SYNOPSIS
+        Visual Studio(또는 Build Tools) 구성 요소가 실제로 설치되어 있는지 확인한다.
+
+    .DESCRIPTION
+        winget 은 Build Tools 를 '설치됨'으로 보고하지만, 그것은 설치 관리자만
+        깔려 있어도 참이다. 컴파일러/링커가 실제로 있는지는 vswhere 로 확인해야 한다.
+        vswhere 자체가 없으면(= Visual Studio 계열이 전혀 없음) 미설치로 본다.
+
+    .PARAMETER ComponentId
+        예: Microsoft.VisualStudio.Component.VC.Tools.x86.x64
+    #>
+    param([Parameter(Mandatory)][string]$ComponentId)
+
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path $vswhere)) { return $false }
+
+    try {
+        # -products * 를 줘야 Build Tools 처럼 IDE 가 아닌 제품도 검색 대상에 들어간다.
+        $found = & $vswhere -products * -requires $ComponentId -property installationPath 2>$null
+        return [bool](@($found | Where-Object { $_ -and $_.Trim() }).Count)
+    }
+    catch {
+        Write-Verbose "vswhere 실행 실패: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Get-VsInstallPath {
+    <#
+    .SYNOPSIS
+        지정한 winget 패키지에 대응하는 Visual Studio 설치 경로를 돌려준다.
+        이미 설치된 제품에 구성 요소만 추가할 때(vs_installer modify) 필요하다.
+        찾지 못하면 $null.
+    #>
+    param([string]$ProductId = 'Microsoft.VisualStudio.Product.BuildTools')
+
+    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+    if (-not (Test-Path $vswhere)) { return $null }
+
+    try {
+        $paths = & $vswhere -products $ProductId -property installationPath 2>$null
+        return (@($paths | Where-Object { $_ -and $_.Trim() }) | Select-Object -First 1)
+    }
+    catch {
+        return $null
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -87,14 +141,14 @@ function Read-ScoopAppList {
             Group   = $group
         }
     }
-    return $items
+    return ,$items
 }
 
 function Read-WingetAppList {
     param([Parameter(Mandatory)][string]$Path)
 
     $items = @()
-    $json  = Get-Content $Path -Raw | ConvertFrom-Json
+    $json  = Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json
     foreach ($source in $json.Sources) {
         foreach ($package in $source.Packages) {
             if (-not $package.PackageIdentifier) { continue }
@@ -106,7 +160,53 @@ function Read-WingetAppList {
             }
         }
     }
-    return $items
+    return ,$items
+}
+
+function Read-WingetOverrideList {
+    <#
+    .SYNOPSIS
+        apps/winget-overrides.json 을 읽는다. winget import 로는 제대로 설치되지 않아
+        개별 install + --override 가 필요한 패키지 목록이다.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+
+    $items = @()
+    $json  = Get-Content $Path -Raw -Encoding UTF8 | ConvertFrom-Json
+    foreach ($package in $json.Packages) {
+        if (-not $package.PackageIdentifier) { continue }
+        $items += [pscustomobject]@{
+            Manager           = 'winget-override'
+            Id                = [string]$package.PackageIdentifier
+            Name              = [string]$package.PackageIdentifier
+            Group             = 'winget 개별 설치 (구성 요소 지정 필요)'
+            Override          = [string]$package.Override
+            RequiresComponent = [string]$package.RequiresComponent
+            Reason            = [string]$package.Reason
+        }
+    }
+    # 앞의 쉼표는 필수다. 항목이 하나뿐이면 PowerShell 이 배열을 스칼라로 펼쳐서
+    # 호출부의 .Count 가 비게 된다. (override 목록은 보통 한 개다)
+    return ,$items
+}
+
+function Test-WingetOverrideInstalled {
+    <#
+    .SYNOPSIS
+        override 패키지가 '쓸 수 있는 상태로' 설치되었는지 판정한다.
+
+    .DESCRIPTION
+        RequiresComponent 가 지정된 패키지는 winget 이 설치됨으로 보고하더라도
+        해당 구성 요소가 없으면 미설치로 본다. Build Tools 가 껍데기만 깔린 상태를
+        걸러내기 위한 것으로, 이 판정이 이 스크립트의 핵심이다.
+    #>
+    param(
+        [Parameter(Mandatory)][object]$Item,
+        [Parameter(Mandatory)][System.Collections.Generic.HashSet[string]]$InstalledWinget
+    )
+
+    if ($Item.RequiresComponent) { return (Test-VsComponent -ComponentId $Item.RequiresComponent) }
+    return $InstalledWinget.Contains($Item.Id)
 }
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,26 @@
+{
+	"_comment": [
+		"winget import 로 설치할 수 없어 개별 설치가 필요한 패키지 목록.",
+		"",
+		"winget import 는 패키지별 --override 를 지원하지 않는다. 설치 관리자에",
+		"추가 인자를 넘겨야 하는 패키지(Visual Studio Build Tools 등)를 winget-apps.json",
+		"에 넣으면 껍데기만 설치되고 실제 구성 요소는 빠진다. 그런 패키지를 여기에 적는다.",
+		"",
+		"필드:",
+		"  PackageIdentifier  winget 패키지 ID",
+		"  Override           설치 관리자에 그대로 전달할 인자 문자열",
+		"  RequiresComponent  (선택) 설치 완료 판정에 쓸 Visual Studio 구성 요소 ID.",
+		"                     지정하면 vswhere 로 실제 구성 요소 존재를 확인한다.",
+		"                     winget 기준으로는 '설치됨'이어도 구성 요소가 없으면",
+		"                     미설치로 간주해 다시 구성한다.",
+		"  Reason             왜 필요한지. 선택 화면과 로그에 표시된다."
+	],
+	"Packages": [
+		{
+			"PackageIdentifier": "Microsoft.VisualStudio.2022.BuildTools",
+			"Override": "--quiet --wait --norestart --nocache --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended",
+			"RequiresComponent": "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+			"Reason": "MSVC 컴파일러/링커. Rust MSVC 툴체인, node-gyp, Python C 확장 빌드에 필요"
+		}
+	]
+}
