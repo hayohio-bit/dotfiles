@@ -5,24 +5,28 @@
 # - main 버킷 외 버킷이 필요한 패키지는 'bucket/package' 형식으로 적는다.
 #   bootstrap.ps1 이 접두사를 읽어 필요한 버킷을 자동으로 추가한다.
 # - 여기 있는 개발 툴체인은 winget 목록과 중복되지 않도록 winget-apps.json 에서 제외되어 있다.
+#
+# git 과 gh 는 여기에 두지 않는다.
+# 저장소를 clone 하려면 그 전에 이미 있어야 하므로 README 1단계에서 winget 으로 설치하며,
+# winget 은 시스템 PATH 에, Scoop 은 사용자 PATH 에 등록된다. Windows 는 시스템 PATH 를
+# 먼저 탐색하므로 Scoop 으로 또 설치해도 winget 쪽이 계속 쓰이고 Scoop 사본은 방치된다.
+# 추적은 winget-apps.json 이 담당한다.
 
 #> 런타임
-git
 nodejs-lts
 python
 java/temurin21-jdk
 
-#> 버전 관리자
-# 프로젝트별 버전 요구가 생겼을 때 즉시 스위칭하기 위해 함께 설치한다.
-# nodejs-lts / python 과 shim 이 겹치므로 나중에 설치된 쪽이 PATH 우선권을 가진다.
-# 버전 전환이 필요해지면 아래를 실행한다.
-#   nvm install lts   / nvm use lts
-#   pyenv install 3.13.0 / pyenv global 3.13.0
-nvm
-pyenv
+# 버전 관리자(nvm, pyenv)는 넣지 않는다.
+# nodejs-lts / python 과 shim 이름이 겹쳐 나중에 설치된 쪽이 PATH 우선권을 가지므로,
+# 둘 다 깔면 node -v / python --version 결과가 설치 순서에 좌우된다.
+# 프로젝트별 버전 전환이 실제로 필요해지면 그때 아래를 실행한다.
+#   scoop uninstall nodejs-lts && scoop install nvm   && nvm install lts && nvm use lts
+#   scoop uninstall python     && scoop install pyenv && pyenv install 3.13.0 && pyenv global 3.13.0
 
 #> CLI 도구
-gh
+# 7zip 은 Scoop 이 패키지 압축을 풀 때 쓰는 의존성이라 어차피 설치된다.
+# 터미널에서 7z 명령을 쓰기 위해 명시해 둔다. (GUI 압축은 winget 의 Bandizip 담당)
 7zip
 sudo
 ripgrep

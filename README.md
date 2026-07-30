@@ -11,7 +11,7 @@ Scoop 단계는 어떤 PC에서도 실행되므로, winget 단계가 통째로 �
 # 새 PC 설치 절차
 
 아래 1~7단계를 순서대로 따라간다. 총 소요 시간은 30분~1시간이다.
-(Visual Studio Build Tools, Docker Desktop, MySQL 이 대부분의 시간을 차지한다.)
+(Visual Studio Build Tools 와 Docker Desktop 이 대부분의 시간을 차지한다.)
 
 ## 1단계. 권한 확인
 
@@ -31,8 +31,9 @@ PowerShell 을 열고 아래를 실행한다.
 ## 2단계. 리포지토리 가져오기
 
 리포지토리가 **private** 이므로 인증이 필요하다.
-또한 새 PC 에는 git 이 없는데 git 은 이 스크립트가 설치하는 대상이므로,
-리포지토리를 받는 단계에서만 별도 수단이 필요하다.
+또한 새 PC 에는 git 이 없는데 리포지토리를 받으려면 git 이 있어야 하므로,
+이 단계에서 git 과 gh 를 먼저 설치한다. 두 도구는 `bootstrap.ps1` 의 설치 대상이 아니라
+**전제 조건**이며, `apps/winget-apps.json` 에는 재실행 시 상태를 추적하기 위해 등재되어 있다.
 
 ### 경로 A — 관리자 권한 있음
 
@@ -302,14 +303,16 @@ scoop install <패키지명>
 scoop install java/temurin21-jdk    # 버킷이 필요한 경우
 ```
 
-### `node -v` 결과가 예상과 다름
+### 프로젝트가 다른 Node / Python 버전을 요구함
 
-`nvm` 이 `nodejs-lts` 와 PATH 가 겹쳐 나중에 설치된 쪽이 우선권을 갖는다.
-평소에는 신경 쓸 필요가 없고, 버전을 고정하려면 아래로 전환한다.
+기본 구성은 언어당 한 버전이다 (`nodejs-lts`, `python`).
+버전 전환이 필요해지면 런타임을 버전 관리자로 교체한다.
+`nvm` / `pyenv` 는 `nodejs-lts` / `python` 과 shim 이름이 겹치므로,
+둘을 함께 두지 말고 반드시 교체한다.
 
 ```powershell
-nvm install lts
-nvm use lts
+scoop uninstall nodejs-lts ; scoop install nvm   ; nvm install lts ; nvm use lts
+scoop uninstall python     ; scoop install pyenv ; pyenv install 3.13.0 ; pyenv global 3.13.0
 ```
 
 ### `gh auth login` 이 안 되는 환경
@@ -336,13 +339,12 @@ bootstrap 은 덮어쓰기 전 `$HOME\.gitconfig.bak` 으로 백업한다.
   ↑↓ 이동   Space 선택/해제   A 전체   N 전체해제   Enter 확인   Esc 취소
 
   ── 런타임 ──────────────────────────────────
-  > [x] git
-    [x] nodejs-lts
+  > [x] nodejs-lts
     [x] python
     [x] temurin21-jdk
-  ── 버전 관리자 ──────────────────────────────
-    [ ] nvm
-    [ ] pyenv
+  ── CLI 도구 ────────────────────────────────
+    [x] 7zip
+    [ ] ripgrep
   ── winget (관리자 권한 필요) ─────────────────
     [ ] Google.Antigravity           이미 설치됨
     [x] Google.Chrome
@@ -429,8 +431,10 @@ dotfiles/
 두 목록은 **중복되지 않는다.**
 
 - `scoop-apps.txt` — 관리자 권한 없이도 확보해야 하는 CLI 도구와 개발 런타임
-  (런타임 `git` `nodejs-lts` `python` `java/temurin21-jdk`,
-  버전 관리자 `nvm` `pyenv`, CLI `gh` `7zip` `sudo` `ripgrep` `fzf`)
+  (런타임 `nodejs-lts` `python` `java/temurin21-jdk`,
+  CLI `7zip` `sudo` `ripgrep` `fzf`)
+  `git` 과 `gh` 는 2단계 전제 조건이라 여기에 없다. winget 쪽이 항상 우선 사용되므로
+  Scoop 으로 또 설치하면 쓰이지 않는 사본만 남는다.
 - `winget-apps.json` — GUI 앱, 시스템 통합 앱, 관리자 권한이 필요한 항목
 - `winget-overrides.json` — `winget import` 로는 온전히 설치되지 않아
   개별 설치가 필요한 항목 (아래 참고)
@@ -464,13 +468,11 @@ Scoop 단계는 어떤 PC에서도 실행되므로, 툴체인은 winget 목록�
 
 Chocolatey 는 제외했다. 대부분 관리자 권한을 요구해 권한 제한 환경에서 실패한다.
 
-`nvm` / `pyenv` 는 `nodejs-lts` / `python` 과 PATH 가 겹쳐 나중에 설치된 쪽이 우선권을 갖는다.
-평소에는 최신 LTS 단일 버전을 쓰고, 프로젝트별 버전 요구가 생기면 아래로 전환한다.
-
-```powershell
-nvm install lts       ; nvm use lts
-pyenv install 3.13.0  ; pyenv global 3.13.0
-```
+`nvm` / `pyenv` 는 목록에 넣지 않았다. `nodejs-lts` / `python` 과 shim 이름이 겹쳐
+나중에 설치된 쪽이 PATH 우선권을 가지므로, 둘 다 설치하면 `node -v` 와
+`python --version` 의 결과가 설치 순서에 좌우된다.
+언어당 한 버전으로 두고, 버전 전환이 실제로 필요해지면 런타임을 관리자로 교체한다.
+(교체 명령은 "문제 해결" 절 참고)
 
 `java` 버킷처럼 기본 버킷이 아닌 곳의 패키지는 `java/temurin21-jdk` 형식으로 적으면
 bootstrap 이 버킷을 자동으로 추가한다.
@@ -490,11 +492,15 @@ winget export -o apps\winget-apps.json
 - MSIX 프레임워크 의존성 — `Microsoft.VCLibs.*`, `Microsoft.UI.Xaml.*`,
   `Microsoft.WindowsAppRuntime.*`, `Microsoft.DotNet.Native.Runtime`, `Microsoft.AppInstaller`
   (다른 앱 설치 시 자동으로 따라온다)
-- Scoop 이 담당하는 툴체인 — `Git.Git`, `GitHub.cli`, `OpenJS.NodeJS`,
-  `Python.Python.*`, `Python.Launcher`, `Microsoft.OpenJDK.*`
+- Scoop 이 담당하는 툴체인 — `OpenJS.NodeJS`, `Python.Python.*`,
+  `Python.Launcher`, `Microsoft.OpenJDK.*`
+  (`Git.Git` 과 `GitHub.cli` 는 제거하지 않는다. 2단계 전제 조건이므로 winget 목록에 남긴다)
 - `winget export` 실행 중 `not available from any source` 경고가 뜬 Windows 내장 구성요소 전반
 - `Microsoft.VisualStudio.2022.BuildTools` — `winget-overrides.json` 이 담당한다.
   import 목록에 남겨두면 구성 요소 없이 설치되므로 반드시 제거한다.
+- `Oracle.MySQL` — 같은 이유로 제외한다. MSI 를 무인 설치하면 파일만 풀리고
+  인스턴스 구성(root 비밀번호, 포트, 서비스 등록)은 이뤄지지 않아
+  winget 기준 '설치됨'이지만 접속되지 않는 상태가 된다. DB 는 Docker 로 띄운다.
 
 Scoop 목록을 갱신하려면 `apps/scoop-apps.txt` 에 한 줄씩 추가한다.
 기본 버킷(main) 외의 패키지는 `버킷명/패키지명` 형식으로 적는다.
@@ -508,6 +514,8 @@ Scoop 목록을 갱신하려면 `apps/scoop-apps.txt` 에 한 줄씩 추가한�
 | Python | 최신 안정판 (`python`) |
 | Rust | rustup 으로 관리 (`Rustlang.Rustup`) |
 | C/C++ 빌드 | VS 2022 Build Tools + VCTools 워크로드 |
+| DB 서버 | Docker 컨테이너로 실행 (로컬 설치 없음) |
+| DB 클라이언트 | DBeaver (`DBeaver.DBeaver.Community`), MySQL Workbench |
 | Git user.name | serena |
 | Git user.email | 239265396+hayohio-bit@users.noreply.github.com |
 | IDE | Antigravity (`Google.Antigravity`, `Google.AntigravityIDE`) |
@@ -519,22 +527,45 @@ Scoop 목록을 갱신하려면 `apps/scoop-apps.txt` 에 한 줄씩 추가한�
 
 ```ini
 [wsl2]
-memory=8GB
-processors=4
-swap=0
+memory=4GB
+processors=2
+swap=2GB
 ```
 
 복사 후 `wsl --shutdown` 으로 적용한다.
-메모리가 16GB 미만인 PC 는 `memory` 값을 4GB 로 낮추는 것을 검토한다.
 
-Docker 속도 저하의 나머지 원인과 대응은 아래와 같다.
+값은 **보유한 PC 중 가장 사양이 낮은 것에 맞춰** 두었다. `.wslconfig` 는 `.gitconfig` 의
+`[include]` 같은 분기 수단이 없어 PC 별로 나눌 수 없으므로, 여유가 있는 PC 에서는 복사한 뒤
+`$HOME\.wslconfig` 를 직접 올려 쓴다. 조정 기준은 파일 머리말의 표를 참고한다.
+
+`processors` 가 CPU 급등에 대한 직접적인 제동 장치다. 물리 코어 수보다 반드시 낮게 잡는다.
+
+### 이 설정으로 해결되지 않는 부분
+
+`.wslconfig` 는 **WSL VM(vmmem)에만** 적용된다. Docker Desktop 의 Windows 측 프로세스
+(`com.docker.backend`, Electron GUI, 자동 업데이트 검사)는 여기서 제한되지 않으며,
+Docker Desktop 은 프로젝트용 배포판과 별개의 WSL VM 을 하나 더 띄운다.
+
+그래도 부하가 남으면 아래 순서로 검토한다.
 
 1. 바인드 마운트 I/O — 프로젝트를 Windows 경로(`C:\Users\...`) 대신
-   WSL 내부 경로(`\\wsl$\Ubuntu\home\...`)에 두면 파일시스템 호환성 문제를 회피할 수 있다.
-2. Vmmem 메모리 무제한 점유 — 위 `.wslconfig` 로 상한을 건다.
-3. 그래도 해소되지 않으면 Podman 전환(`scoop install podman`, `podman machine init/start`)
-   또는 컨테이너를 원격/클라우드 서버에서 실행하는 방식을 검토한다.
-   Docker Desktop 은 상업적 사용 시 유료 라이선스가 필요하다는 점도 함께 고려한다.
+   WSL 내부 경로(`\\wsl$\Ubuntu\home\...`)에 두면 9p 파일시스템을 경유하지 않는다.
+   파일 감시(watch)가 걸린 프로젝트에서 특히 차이가 크다.
+2. Docker Desktop 제거 후 WSL 배포판 안에 Docker Engine 직접 설치 —
+   VM 이 하나로 줄고 GUI 와 백엔드 서비스가 사라진다. 명령과 이미지는 동일하며
+   상업적 사용 라이선스 문제도 없다(docker-ce 는 Apache 2.0).
+
+   ```bash
+   curl -fsSL https://get.docker.com | sudo sh
+   sudo usermod -aG docker $USER
+   sudo service docker start
+   ```
+3. 컨테이너가 DB 하나 때문이라면 컨테이너를 쓰지 않는다 —
+   `MariaDB.Server`(MySQL 호환, MSI 가 설치 중 구성까지 마침) 또는
+   `SQLite.SQLite`(서버 프로세스 없음)가 VM 없이 동작해 가장 가볍다.
+
+Podman 은 대안이 되기 어렵다. Windows 에서 `podman machine` 역시 WSL2 VM 을 띄우므로
+데몬이 없다는 점 외에는 구조가 같다.
 
 ## 프로그램이 이미 설치된 PC 에서 실행할 때
 
@@ -554,11 +585,17 @@ Antigravity, Obsidian, Docker Desktop 등이 이미 있어도 그대로 유지�
 .\bootstrap.ps1 -UpgradeExisting
 ```
 
-### 기존 git / node / python — PATH 우선순위가 바뀜
+### 기존 node / python — PATH 우선순위
 
 Scoop 은 이미 설치된 도구를 인식하지 못하고 자기 버전을 별도로 설치한다.
-`~\scoop\shims` 가 PATH 앞쪽에 놓이므로, 설치 후에는 **Scoop 쪽이 우선 사용된다.**
-기존 설치본이 사라지는 것은 아니고 가려질 뿐이다.
+어느 쪽이 쓰이는지는 **PATH 의 종류**로 갈린다.
+
+- winget 이나 일반 설치 관리자로 깐 도구 → **시스템(Machine) PATH**
+- Scoop → **사용자(User) PATH** (`~\scoop\shims`)
+
+Windows 는 프로세스 환경 변수를 만들 때 시스템 PATH 를 먼저 붙이고 사용자 PATH 를
+이어붙인다. 따라서 양쪽에 같은 도구가 있으면 **기존 설치본이 계속 우선 사용되고
+Scoop 사본은 쓰이지 않은 채 남는다.** git 과 gh 를 Scoop 목록에서 제외한 이유가 이것이다.
 
 어느 쪽이 쓰이는지는 아래로 확인한다.
 

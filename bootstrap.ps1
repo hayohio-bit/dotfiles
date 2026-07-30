@@ -12,6 +12,11 @@
     Scoop 단계는 항상 실행되고, winget 단계는 winget 이 있을 때만 실행된다.
     두 목록은 서로 중복되지 않는다. 개별 앱 설치 실패는 경고로 처리하고 전체를 중단하지 않는다.
 
+    git 과 gh 는 이 저장소를 clone 하는 시점에 이미 있어야 하므로 README 1단계에서
+    winget 으로 먼저 설치한다. Scoop 목록에는 넣지 않는다. winget 은 시스템 PATH 에,
+    Scoop 은 사용자 PATH 에 등록되는데 Windows 는 시스템 PATH 를 먼저 탐색하므로,
+    Scoop 으로 또 설치하면 쓰이지 않는 사본만 남는다.
+
     winget import 는 패키지별 --override 를 지원하지 않으므로, 설치 관리자에 인자를
     넘겨야 하는 패키지(Visual Studio Build Tools 등)는 apps/winget-overrides.json 에
     따로 두고 import 이후 개별 설치한다.
@@ -245,33 +250,30 @@ if (-not $SkipScoop) {
         }
 
         # scoop bucket add 는 내부에서 git clone 을 쓰므로 git 이 없으면
-        # "Git is required for buckets" 로 실패한다. 새 PC 에는 git 이 없을 수 있으니
-        # 버킷을 추가하기 전에 git 을 먼저 설치한다. (main 버킷은 scoop 설치 시 함께 등록되어
-        # 있으므로 git 없이도 설치할 수 있다.)
-        $preInstalled = @()
+        # "Git is required for buckets" 로 실패한다. (main 버킷은 scoop 설치 시 함께
+        # 등록되므로 git 없이도 설치할 수 있다.)
+        #
+        # 보통은 이 저장소를 clone 하는 시점에 winget 으로 git 을 설치했으므로 여기서
+        # 할 일이 없다. 관리자 권한이 없어 ZIP 으로 저장소를 받은 경우에만 git 이 없을 수
+        # 있고, 그때만 버킷 추가용으로 Scoop git 을 설치한다.
+        # apps/scoop-apps.txt 에 git 을 넣지 않는 이유는 파일 머리말을 참고할 것.
         if ($buckets.Count -gt 0 -and -not (Get-Command git -ErrorAction SilentlyContinue)) {
-            $gitEntry = $scoopEntries | Where-Object { $_ -eq 'git' -or $_ -like '*/git' } | Select-Object -First 1
-
             if ($DryRun) {
-                if ($gitEntry) { Write-Info "버킷 추가 전에 먼저 설치 예정: $gitEntry (버킷 추가에 git 필요)" }
-                else           { Write-Info '경고 예정: git 이 없어 버킷 추가가 실패할 수 있음' }
+                Write-Info '버킷 추가 전에 Scoop git 설치 예정 (git 이 없고 버킷 추가에 필요)'
             }
-            elseif ($gitEntry) {
+            else {
                 try {
-                    Write-Info "버킷 추가에 git 이 필요하므로 먼저 설치: $gitEntry"
-                    scoop install $gitEntry
+                    Write-Info '버킷 추가에 git 이 필요하나 찾을 수 없어 Scoop 으로 설치'
+                    $global:LASTEXITCODE = 0
+                    scoop install git
                     if ($LASTEXITCODE -ne 0) { throw "scoop 종료 코드 $LASTEXITCODE" }
                     $shims = Join-Path $env:USERPROFILE 'scoop\shims'
                     if ($env:Path -notlike "*$shims*") { $env:Path = "$shims;$env:Path" }
-                    $preInstalled += $gitEntry
-                    Write-Ok $gitEntry
+                    Write-Ok 'git (버킷 추가용)'
                 }
                 catch {
-                    Write-Fail "git 선행 설치 실패: $($_.Exception.Message) / 버킷 추가가 실패할 수 있음"
+                    Write-Fail "git 설치 실패: $($_.Exception.Message) / 버킷 추가가 실패할 수 있음"
                 }
-            }
-            else {
-                Write-Fail 'git 이 없고 목록에도 없어 버킷 추가가 실패할 수 있음'
             }
         }
 
@@ -294,10 +296,13 @@ if (-not $SkipScoop) {
         }
 
         foreach ($app in $scoopEntries) {
-            if ($preInstalled -contains $app) { continue }
             if ($DryRun) { Write-Info "설치 예정: $app"; continue }
             try {
                 Write-Info "설치: $app"
+                # scoop 은 PATHEXT 에 따라 셸 심(scoop.ps1)으로 실행될 수 있고, 그때는
+                # $LASTEXITCODE 가 갱신되지 않아 직전 네이티브 명령의 값이 그대로 남는다.
+                # 미리 0 으로 두어 오탐을 막고, 실제 설치 여부는 아래에서 다시 대조한다.
+                $global:LASTEXITCODE = 0
                 scoop install $app
                 if ($LASTEXITCODE -ne 0) {
                     throw "scoop 종료 코드 $LASTEXITCODE"
@@ -307,6 +312,23 @@ if (-not $SkipScoop) {
             catch {
                 # 개별 실패는 흡수하고 다음 앱으로 계속 진행한다.
                 Write-Fail "설치 실패: $app / $($_.Exception.Message) / 계속 진행"
+            }
+        }
+
+        # 종료 코드만 믿으면 실패를 놓칠 수 있으므로 실제 설치 결과를 대조한다.
+        # 버킷 추가가 실패해 목록 뒷부분이 통째로 빠지는 상황을 조용히 넘기지 않기 위한 것이다.
+        if (-not $DryRun -and $libLoaded -and
+            $scoopEntries.Count -gt 0 -and
+            (Get-Command scoop -ErrorAction SilentlyContinue)) {
+
+            $installedNow = Get-InstalledScoopId
+            # 'bucket/package' 형식은 실제 패키지 이름으로만 조회된다.
+            $missing = @($scoopEntries | Where-Object { -not $installedNow.Contains($_.Split('/')[-1]) })
+
+            if ($missing.Count -eq 0) {
+                Write-Ok "Scoop 항목 $($scoopEntries.Count) 개 모두 설치 확인"
+            } else {
+                Write-Fail "Scoop 설치 확인 실패 $($missing.Count) 개: $($missing -join ', ')"
             }
         }
     }

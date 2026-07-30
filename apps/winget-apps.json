@@ -7,6 +7,12 @@
 			"Packages" :
 			[
 				{
+					"PackageIdentifier" : "Git.Git"
+				},
+				{
+					"PackageIdentifier" : "GitHub.cli"
+				},
+				{
 					"PackageIdentifier" : "Microsoft.WindowsTerminal"
 				},
 				{
@@ -44,9 +50,6 @@
 				},
 				{
 					"PackageIdentifier" : "DBeaver.DBeaver.Community"
-				},
-				{
-					"PackageIdentifier" : "Oracle.MySQL"
 				},
 				{
 					"PackageIdentifier" : "Oracle.MySQLWorkbench"
