@@ -334,24 +334,30 @@ bootstrap 은 덮어쓰기 전 `$HOME\.gitconfig.bak` 으로 백업한다.
 
 `-Select` 를 붙이면 설치 전에 체크박스 화면이 뜬다.
 
+**`[x]` 가 설치할 항목이고 `[ ]` 는 건너뛴다.** 각 줄 오른쪽에 처리 결과가 글자로도 표시된다.
+
 ```
   설치할 항목을 선택하세요
+  [x] 설치함   [ ] 건너뜀   (이미 설치된 항목은 처음부터 해제되어 있습니다)
   ↑↓ 이동   Space 선택/해제   A 전체   N 전체해제   Enter 확인   Esc 취소
 
   ── 런타임 ──────────────────────────────────
-  > [x] nodejs-lts
-    [x] python
-    [x] temurin21-jdk
+  > [x] nodejs-lts                              -> 설치
+    [ ] python                                     이미 설치됨
+    [x] temurin21-jdk                           -> 설치
   ── CLI 도구 ────────────────────────────────
-    [x] 7zip
-    [ ] ripgrep
+    [x] 7zip                                    -> 설치
+    [ ] ripgrep                                    건너뜀
   ── winget (관리자 권한 필요) ─────────────────
-    [ ] Google.Antigravity           이미 설치됨
-    [x] Google.Chrome
+    [ ] Google.Antigravity                         이미 설치됨
+    [x] Google.Chrome                           -> 설치
 
   (1-20 / 42 행 표시 중)
-  선택됨 12 / 38
+  전체 34 개 중 21 개를 설치합니다. (Enter 로 진행)
 ```
+
+이미 설치된 항목이 기본 해제 상태인 것은 재실행 시 불필요한 재설치를 막기 위한 것이다.
+최신 버전으로 올리려면 해당 항목을 다시 선택하거나 `-UpgradeExisting` 을 쓴다.
 
 | 키 | 동작 |
 |---|---|

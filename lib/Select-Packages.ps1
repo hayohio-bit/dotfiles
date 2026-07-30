@@ -233,6 +233,8 @@ function Write-PickerFrame {
 
     Write-Host ""
     Write-Host "  $Title" -ForegroundColor White
+    # 체크 상태의 의미를 화면에 명시한다. 기호만으로는 설치/제외 어느 쪽인지 읽히지 않는다.
+    Write-Host "  [x] 설치함   [ ] 건너뜀   (이미 설치된 항목은 처음부터 해제되어 있습니다)" -ForegroundColor DarkGray
     Write-Host "  ↑↓ 이동   Space 선택/해제   A 전체   N 전체해제   Enter 확인   Esc 취소" -ForegroundColor DarkGray
     Write-Host ""
 
@@ -256,10 +258,15 @@ function Write-PickerFrame {
         if ($label.Length -gt $labelWidth) { $label = $label.Substring(0, $labelWidth - 1) + '…' }
 
         Write-Host ("  {0} {1} {2}" -f $marker, $box, $label.PadRight($labelWidth)) -ForegroundColor $color -NoNewline
-        if ($row.Item.Installed) {
-            Write-Host "이미 설치됨" -ForegroundColor DarkGray
-        } else {
-            Write-Host ""
+        # 체크박스와 별개로 각 줄이 어떻게 처리될지 글자로 적는다.
+        if ($row.Selected) {
+            Write-Host "-> 설치" -ForegroundColor Green
+        }
+        elseif ($row.Item.Installed) {
+            Write-Host "   이미 설치됨" -ForegroundColor DarkGray
+        }
+        else {
+            Write-Host "   건너뜀" -ForegroundColor DarkGray
         }
     }
 
@@ -267,7 +274,7 @@ function Write-PickerFrame {
     if ($Offset -gt 0 -or $last -lt $Rows.Count) {
         Write-Host "  ($($Offset + 1)-$last / $($Rows.Count) 행 표시 중)" -ForegroundColor DarkGray
     }
-    Write-Host "  선택됨 $chosen / $total" -ForegroundColor White
+    Write-Host "  전체 $total 개 중 $chosen 개를 설치합니다. (Enter 로 진행)" -ForegroundColor White
 }
 
 function Show-PackagePicker {
