@@ -1,0 +1,20 @@
+# 줄바꿈 문자를 파일 종류별로 고정한다.
+#
+# 이 리포지토리는 Windows 에서도 편집하는데, configs/.gitconfig 의
+# core.autocrlf = true 때문에 체크아웃 시 모든 텍스트 파일이 CRLF 로 바뀐다.
+# 셸 스크립트가 CRLF 가 되면 macOS 에서 실행할 때 커널이 인터프리터 경로를
+# "/usr/bin/env bash\r" 로 읽어 'bad interpreter' 로 실패한다.
+# 아래 규칙이 autocrlf 보다 우선하므로 OS 와 무관하게 LF 가 유지된다.
+
+*.sh        text eol=lf
+Brewfile    text eol=lf
+.gitconfig  text eol=lf
+.zprofile   text eol=lf
+
+# PowerShell 은 Windows 에서만 실행되므로 CRLF 로 둔다.
+*.ps1       text eol=crlf
+
+# 목록 파일은 양쪽에서 읽으므로 LF 로 통일한다.
+*.json      text eol=lf
+*.txt       text eol=lf
+*.md        text eol=lf
