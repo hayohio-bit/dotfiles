@@ -3,6 +3,7 @@
 
 # PC 고유 설정 (커밋 대상 아님)
 .gitconfig.local
+.claude/settings.local.json
 
 # 로컬 전용 작업 공간
 .shy/

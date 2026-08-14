@@ -216,7 +216,7 @@ wsl --install -d Ubuntu
 .\bootstrap.ps1 -SkipScoop -SkipWinget -SkipConfigs -SkipMise
 ```
 
-이제 재시작해 `.wslconfig`(메모리 8GB / CPU 4코어 상한), systemd, docker 그룹을
+이제 재시작해 `.wslconfig`(메모리 4GB / CPU 2코어 상한), systemd, docker 그룹을
 한꺼번에 적용한다.
 
 ```powershell

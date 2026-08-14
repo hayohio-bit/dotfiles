@@ -15,6 +15,8 @@ Brewfile    text eol=lf
 *.ps1       text eol=crlf
 
 # 목록 파일은 양쪽에서 읽으므로 LF 로 통일한다.
+# configs/mise.toml 은 Windows 와 macOS 양쪽에 같은 내용이 배치되므로 여기 포함된다.
 *.json      text eol=lf
+*.toml      text eol=lf
 *.txt       text eol=lf
 *.md        text eol=lf
