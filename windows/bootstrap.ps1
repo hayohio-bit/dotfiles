@@ -744,7 +744,20 @@ if (-not $SkipMise) {
         # 프로필 경로는 PowerShell 판마다 다르다 (5.1 은 WindowsPowerShell\,
         # 7 은 PowerShell\). $PROFILE.CurrentUserAllHosts 는 실행 중인 판의 것을
         # 가리키므로, 다른 판을 쓰게 되면 그쪽에는 따로 넣어야 한다.
-        $miseHookLine = 'if (Get-Command mise -ErrorAction SilentlyContinue) { (& mise activate pwsh) | Out-String | Invoke-Expression }'
+        #
+        # MISE_PWSH_CHPWD_WARNING 을 끄는 이유:
+        # PowerShell 5.1 에서 activate 하면 mise 가 "chpwd 기능은 7 이상이 필요하다"는
+        # 경고를 셸을 열 때마다 출력한다. chpwd 는 디렉터리 변경을 직접 감지하는 방식이고,
+        # 5.1 에서는 대신 prompt 훅이 그 일을 한다. 실제로 5.1 에서 디렉터리를 오갈 때
+        # 환경 변수가 바뀌는 것을 확인했으므로 기능상 빠지는 것은 없다.
+        # 다만 프롬프트가 그려질 때 갱신되므로, 프롬프트 없이 도는 스크립트에서
+        # Set-Location 직후의 환경 변수는 낡아 있을 수 있다. 그런 경우에는 `mise x` 를 쓴다.
+        $miseHookLines = @(
+            '# mise - added by dotfiles/windows/bootstrap.ps1'
+            '# chpwd warning is PS7-only guidance; the prompt hook covers it on 5.1.'
+            '$env:MISE_PWSH_CHPWD_WARNING = 0'
+            'if (Get-Command mise -ErrorAction SilentlyContinue) { (& mise activate pwsh) | Out-String | Invoke-Expression }'
+        )
         $profilePath  = $PROFILE.CurrentUserAllHosts
 
         if (-not $isRealHome) {
@@ -767,16 +780,12 @@ if (-not $SkipMise) {
                 # UTF-8 이면 PowerShell 5.1 이 파일 전체를 CP949 로 읽어, 여기 한글을
                 # 넣었을 때 그 부분이 깨진 문자로 보인다. (주석이라 실행에는 지장이
                 # 없지만 남의 파일을 더럽히지 않는다.)
-                Add-Content -Path $profilePath -Encoding UTF8 -Value @(
-                    ''
-                    '# mise - added by dotfiles/windows/bootstrap.ps1'
-                    $miseHookLine
-                )
+                Add-Content -Path $profilePath -Encoding UTF8 -Value (@('') + $miseHookLines)
                 Write-Ok "PowerShell 프로필에 mise activate 추가: $profilePath"
                 Write-Info '새 터미널부터 적용된다.'
             }
             catch {
-                Write-Fail "프로필 수정 실패: $($_.Exception.Message) / 수동으로 다음 줄을 $profilePath 에 추가할 것: $miseHookLine"
+                Write-Fail "프로필 수정 실패: $($_.Exception.Message) / 수동으로 다음 줄을 $profilePath 에 추가할 것: $($miseHookLines -join ' / ')"
             }
         }
 

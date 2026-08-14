@@ -589,8 +589,17 @@ shim 은 명령을 올바른 버전으로 넘겨줄 뿐 **환경 변수는 건�
 (`$PROFILE.CurrentUserAllHosts`)에 아래 줄을 넣는다.
 
 ```powershell
+$env:MISE_PWSH_CHPWD_WARNING = 0
 if (Get-Command mise -ErrorAction SilentlyContinue) { (& mise activate pwsh) | Out-String | Invoke-Expression }
 ```
+
+첫 줄은 경고를 끄는 것이다. PowerShell 5.1 에서 activate 하면 mise 가
+"chpwd 기능은 7 이상이 필요하다"는 경고를 **셸을 열 때마다** 출력한다.
+chpwd 는 디렉터리 변경을 직접 감지하는 방식이고, 5.1 에서는 대신 prompt 훅이
+그 일을 한다. 5.1 에서 디렉터리를 오갈 때 환경 변수가 실제로 바뀌는 것을 확인했으므로
+기능상 빠지는 것은 없다. 다만 갱신 시점이 프롬프트가 그려질 때이므로,
+프롬프트 없이 도는 스크립트에서 `Set-Location` 직후의 환경 변수는 낡아 있을 수 있다.
+그런 경우에는 `mise x` 로 감싼다.
 
 `mise activate pwsh` 는 `prompt` 함수를 감싸는 훅을 건다. 프롬프트가 그려질 때마다
 `mise hook-env` 가 돌면서 현재 디렉터리 기준으로 PATH 와 환경 변수를 다시 계산하므로,
