@@ -10,15 +10,20 @@ OS 마다 패키지 매니저와 스크립트 언어가 다르므로 디렉터�
 
 각 디렉터리의 README 에 설치 절차 전체가 들어 있다. 자기 OS 의 문서만 보면 된다.
 
+**처음 보는 사람은 [`ARCHITECTURE.md`](ARCHITECTURE.md) 를 먼저 읽는 편이 빠르다.**
+무엇이 무엇을 설치하는지, mise 가 버전을 어떻게 고르는지, 컨테이너가 어떤 구조인지를
+다이어그램으로 정리해 두었다.
+
 ---
 
 ## 리포지토리 구조
 
 ```
 dotfiles/
-├── README.md      # 이 파일
-├── windows/       # PowerShell + Scoop/winget
-└── mac/           # zsh + Homebrew
+├── README.md          # 이 파일
+├── ARCHITECTURE.md    # 구조와 동작 원리 (다이어그램)
+├── windows/           # PowerShell + Scoop/winget
+└── mac/               # zsh + Homebrew
 ```
 
 두 디렉터리는 서로를 참조하지 않는다. 스크립트도 설정 파일도 각자 완결되어 있으므로,
