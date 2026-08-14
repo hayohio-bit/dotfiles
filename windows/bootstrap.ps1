@@ -99,13 +99,25 @@ param(
 # 그룹 정책이나 상위 스코프에서 실행 정책이 강제된 PC(관리형 PC 등)에서는
 # CurrentUser 스코프 변경이 거부된다. 이미 스크립트가 실행 중이라는 것은
 # 유효 정책이 충분하다는 뜻이므로, 실패해도 진행을 막지 않는다.
-try {
-    Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+#
+# -DryRun 에서는 건너뛴다. 실행 정책은 PC 설정이고, "실제 변경 없이 계획만 출력"이라는
+# -DryRun 의 약속을 이 한 줄이 깨고 있었다. 계획만 볼 때는 이미 스크립트가 돌고 있으니
+# 정책을 바꿀 이유도 없다.
+if ($DryRun) {
+    Write-Host "  [INFO] DRY RUN: 실행 정책을 바꾸지 않습니다 (현재 유효 정책: $(Get-ExecutionPolicy))." -ForegroundColor Gray
 }
-catch {
-    Write-Host "  [INFO] 실행 정책 변경이 상위 정책에 의해 거부됨 (현재 유효 정책: $(Get-ExecutionPolicy)). 계속 진행합니다." -ForegroundColor Gray
+else {
+    try {
+        Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force -ErrorAction Stop
+    }
+    catch {
+        Write-Host "  [INFO] 실행 정책 변경이 상위 정책에 의해 거부됨 (현재 유효 정책: $(Get-ExecutionPolicy)). 계속 진행합니다." -ForegroundColor Gray
+    }
 }
 
+# 이쪽은 -DryRun 에서도 실행한다. 저장소 안의 .ps1 에 붙은 다운로드 차단 표시를 떼는
+# 것뿐이고, 아래에서 lib\Select-Packages.ps1 을 점 소싱하려면 먼저 풀려 있어야 한다.
+# PC 설정이 아니라 이 저장소 파일에만 영향을 준다.
 Get-ChildItem -Path $PSScriptRoot -Filter *.ps1 -Recurse | Unblock-File
 
 $ErrorActionPreference = 'Continue'

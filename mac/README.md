@@ -12,7 +12,7 @@ Homebrew 는 최초 설치 때만 관리자 암호를 요구하고 그 뒤로는
 
 # 새 Mac 설치 절차
 
-아래 1~6단계를 순서대로 따라간다. 총 소요 시간은 30분~1시간이다.
+아래 1~7단계를 순서대로 따라간다. 총 소요 시간은 30분~1시간이다.
 (Xcode Command Line Tools 와 mise 의 JDK 내려받기가 대부분의 시간을 차지한다.)
 
 ## 1단계. Xcode Command Line Tools

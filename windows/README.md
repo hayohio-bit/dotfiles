@@ -458,7 +458,7 @@ dotfiles/
 
 | 단계 | 내용 |
 |---|---|
-| 0 | 실행 정책을 `RemoteSigned`(CurrentUser)로 설정하고 하위 `.ps1` 을 `Unblock-File` 처리 |
+| 0 | 실행 정책을 `RemoteSigned`(CurrentUser)로 설정하고 하위 `.ps1` 을 `Unblock-File` 처리 (`-DryRun` 이면 실행 정책은 건드리지 않는다) |
 | 1 | Scoop 미설치 시 설치 → 필요한 버킷 추가 → `apps/scoop-apps.txt` 순차 설치 |
 | 2 | `winget import`로 `apps/winget-apps.json` 일괄 설치 |
 | 2-1 | `apps/winget-overrides.json` 의 패키지를 `--override` 를 붙여 개별 설치 |
@@ -479,11 +479,11 @@ dotfiles/
 | `-SkipScoop` | Scoop 단계 생략 |
 | `-SkipWinget` | winget 단계 생략 |
 | `-SkipConfigs` | 설정 파일 복사 생략 |
-| `-SkipMise` | mise 런타임 설치(3-1) 생략 |
+| `-SkipMise` | 3-1 단계 생략 (PATH·프로필 등록과 런타임 설치를 함께 건너뛴다) |
 | `-SkipDocker` | WSL Docker Engine 설치(4) 생략 |
 | `-WslDistro <이름>` | Docker Engine 을 넣을 WSL 배포판 지정 (기본값: WSL 기본 배포판) |
 | `-UpgradeExisting` | winget 단계에서 이미 설치된 앱도 최신 버전으로 갱신 |
-| `-HomePath <경로>` | 설정 파일 복사 대상 지정 (기본값 `$HOME`) |
+| `-HomePath <경로>` | 설정 파일 복사 대상 지정 (기본값 `$HOME`). 기본값이 아니면 3-1 단계의 PATH·프로필 등록도 건너뛴다 |
 
 `-HomePath` 는 빈 디렉터리를 지정해 실제 홈을 건드리지 않고 배치 결과를 확인할 때 쓴다.
 
