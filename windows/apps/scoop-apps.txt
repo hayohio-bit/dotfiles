@@ -12,17 +12,28 @@
 # 먼저 탐색하므로 Scoop 으로 또 설치해도 winget 쪽이 계속 쓰이고 Scoop 사본은 방치된다.
 # 추적은 winget-apps.json 이 담당한다.
 
-#> 런타임
-nodejs-lts
-python
-java/temurin21-jdk
-
-# 버전 관리자(nvm, pyenv)는 넣지 않는다.
-# nodejs-lts / python 과 shim 이름이 겹쳐 나중에 설치된 쪽이 PATH 우선권을 가지므로,
-# 둘 다 깔면 node -v / python --version 결과가 설치 순서에 좌우된다.
-# 프로젝트별 버전 전환이 실제로 필요해지면 그때 아래를 실행한다.
-#   scoop uninstall nodejs-lts && scoop install nvm   && nvm install lts && nvm use lts
-#   scoop uninstall python     && scoop install pyenv && pyenv install 3.13.0 && pyenv global 3.13.0
+#> 버전 관리자
+# mise 하나가 Java / Node / Python / Bun 등의 런타임을 전부 관리한다.
+# 런타임 자체를 Scoop 이나 winget 으로 깔지 않는 이유는 프로젝트마다 필요한 버전이
+# 다르기 때문이다. 패키지 매니저는 언어당 한 버전만 PATH 에 올릴 수 있어서,
+# Java 17 을 쓰는 저장소와 21 을 쓰는 저장소를 오가려면 매번 재설치해야 한다.
+#
+# mise 는 그 대신 shim 을 깐다. shim 은 실제 실행 파일 대신 PATH 에 놓이는 얇은
+# 중계 실행 파일로, 호출되면 현재 작업 디렉터리에서 위로 올라가며 mise.toml 을 찾아
+# 거기 적힌 버전의 진짜 실행 파일로 넘긴다. 그래서 디렉터리만 옮기면 java -version
+# 결과가 바뀐다.
+#
+# 설치할 기본 버전은 ../configs/mise.toml 에 적혀 있고, bootstrap.ps1 3단계가 이를
+# %USERPROFILE%\.config\mise\config.toml 로 배치한 뒤 3-1단계에서 `mise install` 을
+# 실행한다. mise 는 설정을 홈 아래에서 읽고 shim 은 %LOCALAPPDATA%\mise\shims 에 둔다.
+#
+# 프로젝트별 버전 고정은 저장소 루트에서 아래처럼 한다. mise.toml 이 만들어지며
+# 커밋해 두면 팀원과 CI 가 같은 버전을 쓴다.
+#   mise use java@temurin-17
+#   mise use node@22
+#
+# Windows 에서의 제약은 windows/README.md 의 "mise" 절에 정리해 두었다.
+mise
 
 #> CLI 도구
 # 7zip 은 Scoop 이 패키지 압축을 풀 때 쓰는 의존성이라 어차피 설치된다.

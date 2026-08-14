@@ -28,9 +28,6 @@
 					"PackageIdentifier" : "Rustlang.Rustup"
 				},
 				{
-					"PackageIdentifier" : "Docker.DockerDesktop"
-				},
-				{
 					"PackageIdentifier" : "Google.Antigravity"
 				},
 				{
@@ -49,7 +46,13 @@
 					"PackageIdentifier" : "Warp.Warp"
 				},
 				{
+					"PackageIdentifier" : "Google.AndroidStudio"
+				},
+				{
 					"PackageIdentifier" : "DBeaver.DBeaver.Community"
+				},
+				{
+					"PackageIdentifier" : "Oracle.MySQL"
 				},
 				{
 					"PackageIdentifier" : "Oracle.MySQLWorkbench"

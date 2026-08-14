@@ -38,12 +38,6 @@ $manualApps = @(
         Url      = 'https://antigravity.google/download'
         Note     = 'winget: Google.Antigravity / Google.AntigravityIDE'
     }
-    [pscustomobject]@{
-        Name     = 'Docker Desktop'
-        WingetId = 'Docker.DockerDesktop'
-        Url      = 'https://www.docker.com/products/docker-desktop/'
-        Note     = '관리자 권한 필수. 저사양 PC 는 configs/.wslconfig 적용 후 사용할 것.'
-    }
 )
 
 $hasWinget = [bool](Get-Command winget -ErrorAction SilentlyContinue)

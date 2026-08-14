@@ -238,16 +238,15 @@ fi
 # ---------------------------------------------------------------------------
 # Homebrew 는 일부 formula 를 "keg-only" 로 설치한다. 설치는 되지만
 # $BREW_PREFIX/bin 에 심볼릭 링크를 만들지 않아 명령이 PATH 에 잡히지 않는 상태다.
-# 이 목록의 두 패키지가 그렇다.
+# 지금은 rustup 하나가 그렇다.
 #
-#   node@24 : 버전이 붙은 formula 라 keg-only. 링크가 없으면 `node` 명령이 없다.
-#   rustup  : `rust` formula 와 충돌해 keg-only. `rustup` 명령은 별도 링크가 생기지만
-#             `rustc` / `cargo` 는 생기지 않는다.
+#   rustup : `rust` formula 와 충돌해 keg-only. `rustup` 명령은 별도 링크가 생기지만
+#            `rustc` / `cargo` 는 생기지 않는다.
 #
 # 그래서 각 패키지의 bin 디렉터리를 ~/.zprofile 의 PATH 앞쪽에 직접 붙인다.
 step "2-1. keg-only 패키지 PATH 등록"
 
-KEG_ONLY_FORMULAS="node@24 rustup"
+KEG_ONLY_FORMULAS="rustup"
 
 if [ "$SKIP_BREW" -eq 1 ]; then
   info "--skip-brew 지정으로 건너뜁니다."
@@ -288,6 +287,88 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# 2-2. mise 셸 활성화
+# ---------------------------------------------------------------------------
+# `mise activate zsh` 는 zsh 의 디렉터리 변경 훅에 mise 를 건다. 훅이 걸리면
+# 디렉터리를 옮길 때마다 mise 가 mise.toml 을 다시 읽어 PATH 와 환경 변수를 갱신한다.
+#
+# shim 만으로도 `java` / `node` 같은 명령은 올바른 버전으로 넘어가지만, 환경 변수는
+# 바뀌지 않는다. JAVA_HOME 이 대표적이다. Gradle 과 Maven 은 JAVA_HOME 을 먼저 보므로
+# 이 훅이 없으면 프로젝트를 옮겨도 빌드에 쓰이는 JDK 가 그대로다.
+# (Windows 도 `mise activate pwsh` 로 같은 훅을 건다. 넣는 곳이 PowerShell 프로필일
+#  뿐이다. ../windows/README.md 의 "mise" 절 참고.)
+#
+# 이 훅은 ~/.zprofile 이 아니라 ~/.zshrc 에 넣는다. mise 공식 문서가 지정한 위치다.
+#   - .zprofile 은 로그인 셸에서만 읽힌다. Terminal.app 은 매 창이 로그인 셸이지만,
+#     VS Code 나 IntelliJ 의 내장 터미널은 보통 로그인 셸이 아니라 훅이 걸리지 않는다.
+#   - .zshrc 는 대화형 셸이면 모두 읽는다. activate 가 거는 precmd 훅은 대화형에서만
+#     의미가 있으므로 여기가 맞다.
+# PATH 설정(brew shellenv, keg-only)은 그대로 .zprofile 에 둔다. 로그인 시 한 번만
+# 잡히면 되는 값이고 Homebrew 가 그렇게 안내한다.
+#
+# `command -v mise` 로 감싸는 이유: PATH 에 Homebrew 가 없는 채로 대화형 셸이 뜨면
+# (로그인 셸을 거치지 않고 GUI 앱이 직접 띄운 경우) mise 를 못 찾아 셸을 열 때마다
+# 오류가 찍힌다. 없으면 조용히 넘어가게 한다.
+step "2-2. mise 셸 활성화"
+
+ZSHRC="$HOME_PATH/.zshrc"
+
+if [ "$SKIP_BREW" -eq 1 ]; then
+  info "--skip-brew 지정으로 건너뜁니다."
+elif ! command -v mise >/dev/null 2>&1 && [ "$DRY_RUN" -eq 0 ]; then
+  fail "mise 명령을 찾을 수 없습니다. 2단계에서 설치가 실패했는지 확인하세요."
+elif [ -f "$ZSHRC" ] && grep -qF 'mise activate zsh' "$ZSHRC"; then
+  ok "~/.zshrc 에 mise activate 가 이미 있습니다."
+elif [ "$DRY_RUN" -eq 1 ]; then
+  plan "~/.zshrc 에 mise activate 추가"
+else
+  {
+    printf '\n# mise (dotfiles/mac/bootstrap.sh 가 추가함)\n'
+    printf 'if command -v mise >/dev/null 2>&1; then\n'
+    printf '  eval "$(mise activate zsh)"\n'
+    printf 'fi\n'
+  } >>"$ZSHRC" && ok "~/.zshrc 에 mise activate 를 추가했습니다." \
+    || fail "~/.zshrc 에 mise activate 를 추가하지 못했습니다."
+fi
+
+# ---------------------------------------------------------------------------
+# 2-3. docker compose 플러그인 연결
+# ---------------------------------------------------------------------------
+# Homebrew 의 docker-compose 는 formula 지만 실제로는 docker CLI 의 "플러그인"이다.
+# docker CLI 는 플러그인을 ~/.docker/cli-plugins 에서 찾는데, Homebrew 는 자기
+# 경로($HOMEBREW_PREFIX/lib/docker/cli-plugins)에만 설치한다. 연결해 주지 않으면
+# `docker-compose`(하이픈)는 되지만 `docker compose`(하이픈 없음)가 동작하지 않는다.
+#
+# Homebrew 는 ~/.docker/config.json 에 cliPluginsExtraDirs 를 넣으라고 안내하지만,
+# 그 파일은 docker 가 관리하는 JSON 이라 스크립트로 병합하려면 jq 가 필요하다.
+# 심볼릭 링크 한 줄이면 같은 결과를 얻으므로 이쪽을 쓴다.
+step "2-3. docker compose 플러그인 연결"
+
+COMPOSE_SRC="$BREW_PREFIX/lib/docker/cli-plugins/docker-compose"
+COMPOSE_DEST="$HOME_PATH/.docker/cli-plugins/docker-compose"
+
+if [ "$SKIP_BREW" -eq 1 ]; then
+  info "--skip-brew 지정으로 건너뜁니다."
+# -e 만 쓴다. -L 을 함께 보면 끊어진 심볼릭 링크(-e 는 거짓, -L 은 참)도 "연결됨"으로
+# 판정해 버린다. Homebrew 접두사가 /usr/local 에서 /opt/homebrew 로 바뀌었거나
+# docker-compose 가 다른 keg 경로로 재설치되면 링크가 끊어지는데, 그때 아래 ln -sfn
+# 한 줄이면 고칠 수 있는 것을 매 실행마다 건너뛰게 된다.
+elif [ -e "$COMPOSE_DEST" ]; then
+  ok "docker compose 플러그인이 이미 연결되어 있습니다."
+elif [ "$DRY_RUN" -eq 1 ]; then
+  plan "심볼릭 링크 생성: $COMPOSE_DEST -> $COMPOSE_SRC"
+elif [ ! -f "$COMPOSE_SRC" ]; then
+  # 2단계에서 docker-compose 설치가 실패했거나 Homebrew 가 경로를 바꾼 경우다.
+  fail "docker-compose 플러그인을 찾을 수 없습니다: $COMPOSE_SRC / 'docker compose' 가 동작하지 않습니다"
+else
+  if mkdir -p "$(dirname "$COMPOSE_DEST")" && ln -sfn "$COMPOSE_SRC" "$COMPOSE_DEST"; then
+    ok "docker compose 플러그인 연결: $COMPOSE_DEST"
+  else
+    fail "docker compose 플러그인을 연결하지 못했습니다."
+  fi
+fi
+
+# ---------------------------------------------------------------------------
 # 3. 설정 파일 배치
 # ---------------------------------------------------------------------------
 step "3. 설정 파일 배치"
@@ -305,7 +386,8 @@ else
     fi
   fi
 
-  # configs/ 안의 점 파일을 전부 복사한다. 현재는 .gitconfig 하나뿐이다.
+  # configs/ 안의 점 파일을 홈 바로 아래로 복사한다. 현재는 .gitconfig 하나뿐이다.
+  # 점 파일이 아니거나 홈 아래가 아닌 곳으로 가는 설정(mise.toml)은 아래에서 따로 다룬다.
   for src in "$CONFIGS_DIR"/.[!.]*; do
     [ -f "$src" ] || continue
     name="$(basename "$src")"
@@ -340,6 +422,59 @@ else
       fail "$name 복사 실패."
     fi
   done
+
+  # mise 전역 설정. 홈 바로 아래가 아니라 ~/.config/mise/config.toml 이고
+  # 파일 이름도 바뀌므로 위 반복문이 다루지 못한다.
+  MISE_SRC="$CONFIGS_DIR/mise.toml"
+  MISE_DEST="$HOME_PATH/.config/mise/config.toml"
+
+  if [ ! -f "$MISE_SRC" ]; then
+    fail "원본 없음: $MISE_SRC"
+  elif [ -f "$MISE_DEST" ] && cmp -s "$MISE_SRC" "$MISE_DEST"; then
+    ok "mise.toml — 내용이 같아 건너뜁니다."
+  elif [ "$DRY_RUN" -eq 1 ]; then
+    plan "mise.toml 복사 -> $MISE_DEST"
+  else
+    if mkdir -p "$(dirname "$MISE_DEST")"; then
+      if [ -f "$MISE_DEST" ]; then
+        cp -p "$MISE_DEST" "$MISE_DEST.bak" \
+          && info "기존 config.toml 을 config.toml.bak 으로 백업했습니다." \
+          || fail "mise config.toml 백업 실패."
+      fi
+      cp "$MISE_SRC" "$MISE_DEST" \
+        && ok "mise.toml -> $MISE_DEST" \
+        || fail "mise.toml 복사 실패."
+    else
+      fail "$(dirname "$MISE_DEST") 를 만들지 못했습니다."
+    fi
+  fi
+fi
+
+# ---------------------------------------------------------------------------
+# 3-1. mise 런타임 설치
+# ---------------------------------------------------------------------------
+# 인자 없는 `mise install` 은 적용 중인 설정 파일에 적힌 도구를 전부 내려받는다.
+# 방금 배치한 전역 config.toml 이 그 대상이다.
+step "3-1. mise 런타임 설치"
+
+if [ "$SKIP_CONFIGS" -eq 1 ]; then
+  info "--skip-configs 로 설정을 배치하지 않아 건너뜁니다."
+elif ! command -v mise >/dev/null 2>&1; then
+  if [ "$DRY_RUN" -eq 1 ]; then
+    plan "mise install (configs/mise.toml 의 기본 버전 설치)"
+  else
+    fail "mise 명령이 없어 건너뜁니다. 나중에 'mise install' 을 직접 실행하세요."
+  fi
+elif [ "$DRY_RUN" -eq 1 ]; then
+  plan "mise install (configs/mise.toml 의 기본 버전 설치)"
+else
+  info "mise install 실행 중... (JDK 등을 내려받으므로 몇 분 걸릴 수 있습니다)"
+  if mise install --yes; then
+    ok "mise 기본 런타임 설치 완료"
+    mise ls --installed 2>/dev/null | sed 's/^/    /'
+  else
+    fail "mise 런타임 설치 실패. 나중에 'mise install' 을 직접 실행하세요."
+  fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -375,6 +510,7 @@ if [ "$DRY_RUN" -eq 1 ]; then
   printf '  DRY RUN 이므로 실제로 변경된 것은 없습니다.\n'
 else
   printf '  터미널을 새로 열어 PATH 를 갱신한 뒤 README 의 "결과 확인" 절을 진행하세요.\n'
+  printf '  컨테이너를 쓰려면 `colima start` 로 VM 을 먼저 띄웁니다.\n'
 fi
 printf '\n'
 

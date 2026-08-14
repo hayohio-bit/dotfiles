@@ -1,0 +1,36 @@
+# mise 전역 설정
+#
+# 배치 위치
+#   Windows : %USERPROFILE%\.config\mise\config.toml  (bootstrap.ps1 3단계가 복사한다)
+#   macOS   : ~/.config/mise/config.toml        (mac/bootstrap.sh 3단계가 복사한다)
+#
+# 여기 적은 버전은 "프로젝트가 아무 말도 하지 않을 때 쓰는 기본값"이다.
+# mise 는 명령을 실행할 때 현재 디렉터리에서 위로 올라가며 mise.toml 을 찾고,
+# 하나도 없으면 이 전역 설정으로 내려온다. 그래서 프로젝트 밖의 터미널에서
+# java -version 을 치면 아래 temurin-21 이 나온다.
+#
+# 프로젝트에서 다른 버전을 쓰려면 그 저장소 루트에서 실행한다.
+#   mise use java@temurin-17     # 저장소 루트에 mise.toml 을 만들고 버전을 적는다
+#   mise use node@22
+# 만들어진 mise.toml 은 커밋한다. 팀원과 CI 가 같은 버전을 쓰게 된다.
+# 커밋하지 않을 개인 오버라이드는 mise.local.toml 에 적는다. (mise 가 먼저 읽는다)
+#
+# 설치 가능한 버전 목록은 `mise ls-remote java` / `mise ls-remote node` 로 본다.
+
+[tools]
+# Java 는 배포판을 함께 적는다. 'java@21' 만 쓰면 mise 의 기본 배포판이 잡히는데,
+# 확정 스택을 Temurin 으로 맞춰 두었으므로 배포판까지 고정한다.
+java = "temurin-21"
+
+# "lts" 는 그때그때의 Active LTS 를 가리키는 별칭이다. 새 LTS 가 나오면
+# `mise upgrade node` 로 따라간다. 버전을 얼리려면 "24" 처럼 숫자로 바꾼다.
+node = "lts"
+
+python = "3.13"
+bun = "latest"
+
+# 필요해지면 주석을 푼다. mise 가 알아서 받아 설치한다.
+# go = "latest"
+
+# Rust 는 여기에 없다. rustup 이 이미 rust-toolchain.toml 을 읽어 프로젝트별 전환을
+# 하므로, mise 까지 끼면 같은 일을 두 곳에서 관리하게 된다.

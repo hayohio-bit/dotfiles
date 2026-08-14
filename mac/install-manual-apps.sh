@@ -34,7 +34,6 @@ fi
 MANUAL_APPS=(
   "KakaoTalk|KakaoTalk.app|https://apps.apple.com/us/app/kakaotalk/id869223134|Mac App Store 전용. Brewfile 의 mas 항목이 처리하지만, App Store 에 먼저 로그인해야 한다."
   "Bandizip|Bandizip.app|https://apps.apple.com/us/app/bandizip-archiver/id1265704574|Mac App Store 전용. Homebrew cask 가 없다. Keka(cask \"keka\")로 대체해도 된다."
-  "Docker Desktop|Docker.app|https://www.docker.com/products/docker-desktop/|cask 로 설치되지만 최초 실행 시 로그인과 권한 승인이 필요하다."
   "Orca|Orca.app|https://www.onorca.dev/docs/install|Homebrew core 에 없어 별도 tap 을 쓴다. tap 이 실패하면 이 페이지에서 직접 받는다."
   "Antigravity|Antigravity.app|https://antigravity.google/download|cask 로 설치되지만 최초 실행 시 Google 계정 로그인이 필요하다."
 )

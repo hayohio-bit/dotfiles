@@ -12,6 +12,13 @@
     Scoop 단계는 항상 실행되고, winget 단계는 winget 이 있을 때만 실행된다.
     두 목록은 서로 중복되지 않는다. 개별 앱 설치 실패는 경고로 처리하고 전체를 중단하지 않는다.
 
+    언어 런타임(Java, Node, Python, Bun)은 두 목록 어디에도 없다. 프로젝트마다 필요한
+    버전이 달라서 패키지 매니저로 고정하면 안 되기 때문이다. 대신 Scoop 이 mise 를 깔고,
+    3-1 단계가 configs/mise.toml 의 기본 버전을 설치한다.
+
+    컨테이너 런타임도 Docker Desktop 을 쓰지 않는다. 4단계가 WSL2 배포판 안에
+    Docker Engine 을 설치한다. 자세한 배경은 README.md 의 "Docker" 절을 볼 것.
+
     git 과 gh 는 이 저장소를 clone 하는 시점에 이미 있어야 하므로 README 1단계에서
     winget 으로 먼저 설치한다. Scoop 목록에는 넣지 않는다. winget 은 시스템 PATH 에,
     Scoop 은 사용자 PATH 에 등록되는데 Windows 는 시스템 PATH 를 먼저 탐색하므로,
@@ -34,6 +41,16 @@
 
 .PARAMETER SkipConfigs
     설정 파일($HOME 복사) 단계를 건너뛴다.
+
+.PARAMETER SkipMise
+    mise 런타임 설치 단계(3-1)를 건너뛴다.
+
+.PARAMETER SkipDocker
+    WSL Docker Engine 설치 단계(4)를 건너뛴다.
+    WSL 을 쓰지 않거나 컨테이너가 필요 없는 PC 에서 지정한다.
+
+.PARAMETER WslDistro
+    Docker Engine 을 설치할 WSL 배포판 이름. 기본값은 WSL 기본 배포판.
 
 .PARAMETER UpgradeExisting
     winget 단계에서 이미 설치된 앱도 최신 버전으로 올린다.
@@ -68,6 +85,9 @@ param(
     [switch]$SkipScoop,
     [switch]$SkipWinget,
     [switch]$SkipConfigs,
+    [switch]$SkipMise,
+    [switch]$SkipDocker,
+    [string]$WslDistro,
     [switch]$UpgradeExisting,
     [string]$HomePath = $HOME,
     [switch]$DryRun
@@ -114,6 +134,20 @@ $configsDir     = Join-Path $PSScriptRoot 'configs'
 $scoopList      = Join-Path $appsDir 'scoop-apps.txt'
 $wingetList     = Join-Path $appsDir 'winget-apps.json'
 $overrideList   = Join-Path $appsDir 'winget-overrides.json'
+
+# mise 는 설정과 데이터를 서로 다른 곳에 둔다. `mise doctor` 의 dirs 출력 기준이다.
+#
+#   config : ~\.config\mise\config.toml      (홈 아래. XDG_CONFIG_HOME 규칙을 그대로 씀)
+#   data   : %LOCALAPPDATA%\mise             (Windows 만 XDG_DATA_HOME 이 여기로 매핑됨)
+#   shims  : %LOCALAPPDATA%\mise\shims
+#
+# 설정만 홈 아래라는 점이 헷갈리기 쉽다. config 를 %LOCALAPPDATA% 에 두면 mise 가
+# 읽지 않아 `mise install` 이 아무것도 설치하지 않고 조용히 성공한다.
+$miseConfigFile = Join-Path $HomePath '.config\mise\config.toml'
+
+# shim 경로는 실제 LOCALAPPDATA 를 따른다. -HomePath 로 가짜 홈을 지정한 검증 실행에서는
+# 아래 3-1 단계가 PATH 등록 자체를 건너뛰므로 이 값이 쓰이지 않는다.
+$miseShims      = Join-Path $env:LOCALAPPDATA 'mise\shims'
 
 # lib 는 -Select 화면뿐 아니라 winget 개별 설치 단계에서도 쓰이므로 항상 읽어둔다.
 $libLoaded    = $false
@@ -554,6 +588,7 @@ if (-not $SkipConfigs) {
     $configMap = @(
         @{ Source = '.gitconfig'; Target = (Join-Path $HomePath '.gitconfig') }
         @{ Source = '.wslconfig'; Target = (Join-Path $HomePath '.wslconfig') }
+        @{ Source = 'mise.toml';  Target = $miseConfigFile }
     )
 
     foreach ($item in $configMap) {
@@ -575,6 +610,12 @@ if (-not $SkipConfigs) {
             continue
         }
         try {
+            # mise 설정처럼 홈 바로 아래가 아닌 경로는 상위 디렉터리가 없을 수 있다.
+            $targetDir = Split-Path -Parent $target
+            if ($targetDir -and -not (Test-Path $targetDir)) {
+                New-Item -ItemType Directory -Path $targetDir -Force | Out-Null
+                Write-Info "대상 디렉터리 생성: $targetDir"
+            }
             if (Test-Path $target) {
                 # 기존 설정을 덮어쓰기 전에 항상 백업본을 남긴다.
                 $backup = "$target.bak"
@@ -601,9 +642,268 @@ else {
 }
 
 # ---------------------------------------------------------------------------
-# 4. 패키지 매니저로 설치되지 않는 앱 안내
+# 3-1. mise 런타임
 # ---------------------------------------------------------------------------
-Write-Step '4. 수동 설치 안내'
+# Java / Node / Python / Bun 은 Scoop 이나 winget 이 아니라 mise 가 관리한다.
+# 여기서 하는 일은 세 가지다.
+#
+#   1) mise 의 shim 디렉터리를 사용자 PATH 에 영구 등록한다.
+#      shim 은 진짜 실행 파일 대신 PATH 에 놓이는 중계 실행 파일이다. `java` 를 치면
+#      shim 이 현재 디렉터리부터 위로 올라가며 mise.toml 을 찾아, 거기 적힌 버전의
+#      실제 java.exe 로 넘긴다. PowerShell 을 거치지 않고 실행되는 IDE·cmd.exe 는
+#      아래 2)의 훅을 받지 못하므로, 이 등록이 그쪽의 유일한 경로다.
+#   2) PowerShell 프로필에 `mise activate pwsh` 를 넣는다.
+#      shim 은 명령을 올바른 버전으로 넘겨줄 뿐 환경 변수는 건드리지 않는다.
+#      activate 는 프롬프트 훅을 걸어 디렉터리를 옮길 때마다 `mise hook-env` 를 돌리고,
+#      그래야 JAVA_HOME 이 프로젝트에 맞춰 갱신된다. Gradle 과 Maven 이 이 값을
+#      먼저 보므로 훅이 없으면 디렉터리를 옮겨도 빌드에 쓰이는 JDK 가 그대로다.
+#   3) configs/mise.toml 에 적힌 기본 버전을 실제로 내려받는다.
+#
+# -HomePath 로 가짜 홈을 지정한 검증 실행에서는 1)과 2)를 건너뛴다. 둘 다 실제 사용자
+# 레지스트리와 실제 프로필을 건드리므로, 격리 검증이라는 -HomePath 의 목적과 어긋난다.
+if (-not $SkipMise) {
+    Write-Step '3-1. mise 런타임'
+
+    $isRealHome = ($HomePath -eq $HOME)
+    if (-not $isRealHome) {
+        Write-Info "-HomePath 가 실제 홈이 아니므로 PATH 등록과 프로필 수정을 건너뜁니다."
+    }
+
+    # Scoop 설치 직후라 현재 세션 PATH 에 아직 없을 수 있으므로 shims 도 같이 본다.
+    $miseCmd = $null
+    if (Get-Command mise -ErrorAction SilentlyContinue) {
+        $miseCmd = 'mise'
+    } else {
+        $scoopMise = Join-Path $env:USERPROFILE 'scoop\shims\mise.exe'
+        if (Test-Path $scoopMise) { $miseCmd = $scoopMise }
+    }
+
+    if (-not $miseCmd -and -not $DryRun) {
+        Write-Fail 'mise 를 찾을 수 없어 런타임 설치를 건너뜀. 1단계에서 Scoop 설치가 실패했는지 확인할 것'
+    }
+    else {
+        # --- PATH 등록 -----------------------------------------------------
+        # [Environment]::SetEnvironmentVariable(...,'User') 는 REG_EXPAND_SZ 인
+        # 사용자 Path 를 REG_SZ 로 바꿔 버려, 기존 항목의 %USERPROFILE% 같은 변수가
+        # 확장되지 않은 문자열로 굳는다. 레지스트리를 직접 다뤄 종류를 유지한다.
+        if (-not $isRealHome) {
+            # 격리 검증 중이다. 실제 레지스트리를 건드리지 않는다.
+        }
+        elseif ($DryRun) {
+            Write-Info "사용자 PATH 에 추가 예정: $miseShims"
+        }
+        else {
+            try {
+                $envKey = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+                $userPath = $envKey.GetValue(
+                    'Path', '',
+                    [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames
+                )
+                $entries = @($userPath -split ';' | Where-Object { $_ })
+
+                if ($entries -contains $miseShims) {
+                    Write-Ok "사용자 PATH 에 이미 등록됨: $miseShims"
+                }
+                else {
+                    # shim 이 다른 매니저의 런타임보다 먼저 잡히도록 앞에 붙인다.
+                    $envKey.SetValue(
+                        'Path',
+                        (@($miseShims) + $entries -join ';'),
+                        [Microsoft.Win32.RegistryValueKind]::ExpandString
+                    )
+                    Write-Ok "사용자 PATH 에 추가: $miseShims"
+                    Write-Info '새 터미널부터 적용된다.'
+                }
+                $envKey.Close()
+
+                # 아래 mise install 과 확인 단계에서 바로 쓰도록 현재 세션에도 반영한다.
+                if ($env:Path -notlike "*$miseShims*") { $env:Path = "$miseShims;$env:Path" }
+            }
+            catch {
+                Write-Fail "사용자 PATH 등록 실패: $($_.Exception.Message) / 수동으로 $miseShims 를 추가할 것"
+            }
+        }
+
+        # --- PowerShell 프로필에 activate 등록 --------------------------------
+        # `mise activate pwsh` 는 prompt 함수를 감싸는 훅을 걸고, 프롬프트가 그려질
+        # 때마다 `mise hook-env` 를 돌려 PATH 와 환경 변수를 다시 계산한다.
+        # 이것이 있어야 JAVA_HOME 이 디렉터리에 맞춰 바뀐다.
+        #
+        # 프로필 경로는 PowerShell 판마다 다르다 (5.1 은 WindowsPowerShell\,
+        # 7 은 PowerShell\). $PROFILE.CurrentUserAllHosts 는 실행 중인 판의 것을
+        # 가리키므로, 다른 판을 쓰게 되면 그쪽에는 따로 넣어야 한다.
+        $miseHookLine = 'if (Get-Command mise -ErrorAction SilentlyContinue) { (& mise activate pwsh) | Out-String | Invoke-Expression }'
+        $profilePath  = $PROFILE.CurrentUserAllHosts
+
+        if (-not $isRealHome) {
+            # 격리 검증 중이다. 실제 프로필을 건드리지 않는다.
+        }
+        elseif ($DryRun) {
+            Write-Info "PowerShell 프로필에 mise activate 추가 예정: $profilePath"
+        }
+        elseif ((Test-Path $profilePath) -and
+                (Select-String -Path $profilePath -SimpleMatch 'mise activate pwsh' -Quiet)) {
+            Write-Ok "PowerShell 프로필에 mise activate 가 이미 있음"
+        }
+        else {
+            try {
+                $profileDir = Split-Path -Parent $profilePath
+                if (-not (Test-Path $profileDir)) {
+                    New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+                }
+                # 덧붙이는 줄은 ASCII 로만 쓴다. 사용자의 기존 프로필이 BOM 없는
+                # UTF-8 이면 PowerShell 5.1 이 파일 전체를 CP949 로 읽어, 여기 한글을
+                # 넣었을 때 그 부분이 깨진 문자로 보인다. (주석이라 실행에는 지장이
+                # 없지만 남의 파일을 더럽히지 않는다.)
+                Add-Content -Path $profilePath -Encoding UTF8 -Value @(
+                    ''
+                    '# mise - added by dotfiles/windows/bootstrap.ps1'
+                    $miseHookLine
+                )
+                Write-Ok "PowerShell 프로필에 mise activate 추가: $profilePath"
+                Write-Info '새 터미널부터 적용된다.'
+            }
+            catch {
+                Write-Fail "프로필 수정 실패: $($_.Exception.Message) / 수동으로 다음 줄을 $profilePath 에 추가할 것: $miseHookLine"
+            }
+        }
+
+        # --- JAVA_HOME 확인 -------------------------------------------------
+        # activate 훅은 mise 가 관리하는 값만 덮어쓴다. 예전 JDK 설치 관리자가 남긴
+        # JAVA_HOME 이 사용자·시스템 범위에 있으면, 훅이 걸리지 않는 환경
+        # (cmd.exe, IDE 가 직접 띄운 빌드 프로세스)에서는 그 값이 그대로 쓰인다.
+        # 자동으로 지우지는 않는다. 다른 도구가 의존하고 있을 수 있어서다.
+        foreach ($scope in @('User', 'Machine')) {
+            $javaHome = [Environment]::GetEnvironmentVariable('JAVA_HOME', $scope)
+            if ($javaHome) {
+                Write-Fail "JAVA_HOME 이 $scope 범위에 고정되어 있음: $javaHome / PowerShell 밖(cmd.exe, IDE 빌드)에서 mise 의 Java 버전이 무시된다. README 의 'mise' 절 참고"
+            }
+        }
+
+        # --- 런타임 설치 ----------------------------------------------------
+        # 인자 없는 `mise install` 은 적용 중인 설정 파일에 적힌 도구를 전부 받는다.
+        # 3단계가 방금 배치한 전역 config.toml 이 그 대상이다.
+        if ($DryRun) {
+            Write-Info 'mise install 예정 (configs/mise.toml 의 기본 버전 설치)'
+        }
+        else {
+            try {
+                Write-Info 'mise install 실행 중... (JDK 등을 내려받으므로 몇 분 걸릴 수 있음)'
+                $global:LASTEXITCODE = 0
+                & $miseCmd install --yes
+                if ($LASTEXITCODE -ne 0) { throw "mise 종료 코드 $LASTEXITCODE" }
+                Write-Ok 'mise 기본 런타임 설치 완료'
+
+                # 새로 깐 런타임의 shim 이 실제로 만들어졌는지 확인한다.
+                & $miseCmd reshim 2>$null | Out-Null
+                $installed = (& $miseCmd ls --installed 2>$null) | Out-String
+                if ($installed.Trim()) {
+                    Write-Info "설치된 런타임:`n$($installed.TrimEnd())"
+                }
+            }
+            catch {
+                Write-Fail "mise 런타임 설치 실패: $($_.Exception.Message) / 나중에 'mise install' 을 직접 실행할 것"
+            }
+        }
+    }
+}
+else {
+    Write-Step '3-1. mise 런타임 (건너뜀)'
+}
+
+# ---------------------------------------------------------------------------
+# 4. WSL Docker Engine
+# ---------------------------------------------------------------------------
+# Docker Desktop 대신 WSL2 배포판 안에 Docker Engine 을 직접 설치한다.
+# 실제 작업은 scripts/install-docker-wsl.sh 가 WSL 안에서 수행하고,
+# 여기서는 배포판을 고르고 그 스크립트를 넘기는 일만 한다.
+if (-not $SkipDocker) {
+    Write-Step '4. WSL Docker Engine'
+
+    $dockerScript = Join-Path $PSScriptRoot 'scripts\install-docker-wsl.sh'
+
+    if (-not (Test-Path $dockerScript)) {
+        Write-Fail "스크립트 없음: $dockerScript"
+    }
+    elseif (-not (Get-Command wsl -ErrorAction SilentlyContinue)) {
+        Write-Fail 'wsl 명령을 찾을 수 없어 건너뜀. winget 단계의 Microsoft.WSL 설치 후 재부팅이 필요할 수 있음'
+    }
+    else {
+        # 설치된 배포판을 확인한다. wsl.exe 는 출력을 UTF-16LE 로 내보내므로
+        # 기본 인코딩으로 읽으면 글자 사이에 널 문자가 낀 문자열이 된다.
+        $prevEncoding = [Console]::OutputEncoding
+        try {
+            [Console]::OutputEncoding = [Text.Encoding]::Unicode
+            $distros = @(
+                (wsl --list --quiet 2>$null) |
+                    ForEach-Object { $_.Trim() } |
+                    Where-Object { $_ -and $_ -notlike 'docker-desktop*' }
+            )
+        }
+        finally {
+            [Console]::OutputEncoding = $prevEncoding
+        }
+
+        # -WslDistro 를 주면 그것을 쓰고, 아니면 기본 배포판(목록 첫 줄)을 쓴다.
+        $targetDistro = if ($WslDistro) { $WslDistro } else { $distros | Select-Object -First 1 }
+
+        if (-not $targetDistro) {
+            Write-Fail 'WSL 배포판이 없어 건너뜀. "wsl --install -d Ubuntu" 로 배포판을 먼저 설치할 것'
+        }
+        elseif ($WslDistro -and ($distros -notcontains $WslDistro)) {
+            Write-Fail "지정한 배포판을 찾을 수 없음: $WslDistro / 설치된 배포판: $($distros -join ', ')"
+        }
+        else {
+            # \\wsl.localhost 경유로 Windows 경로를 읽는 것보다, wslpath 로 변환한
+            # /mnt/c/... 경로를 쓰는 편이 배포판 설정에 덜 의존한다.
+            #
+            # 경로는 반드시 슬래시로 바꿔 넘긴다. 백슬래시가 든 인자를 wsl.exe 에 그대로
+            # 주면 리눅스 쪽 argv 처리에서 이스케이프로 해석되어 전부 사라지고,
+            # 'C:Users<사용자>...' 같은 문자열이 wslpath 에 전달된다.
+            # wslpath 는 'C:/Users/...' 형식도 그대로 받아준다.
+            $dockerScriptSlash = $dockerScript.Replace('\', '/')
+            $wslPathOutput = @(wsl -d $targetDistro -- wslpath -a $dockerScriptSlash 2>$null)
+            $wslScriptPath = ($wslPathOutput | Where-Object { $_ -like '/*' } | Select-Object -First 1)
+
+            if (-not $wslScriptPath) {
+                Write-Fail "WSL 안에서 스크립트 경로를 확인하지 못함 ($targetDistro). Windows 드라이브 마운트(automount)가 꺼져 있는지 확인할 것"
+            }
+            elseif ($DryRun) {
+                Write-Info "배포판 '$targetDistro' 에서 실행 예정: bash $wslScriptPath"
+                wsl -d $targetDistro -- bash $wslScriptPath --dry-run
+            }
+            else {
+                Write-Info "배포판 '$targetDistro' 에 Docker Engine 설치 (sudo 비밀번호를 물을 수 있음)"
+                try {
+                    wsl -d $targetDistro -- bash $wslScriptPath
+                    if ($LASTEXITCODE -ne 0) { throw "스크립트 종료 코드 $LASTEXITCODE" }
+                    Write-Ok "Docker Engine 설치 완료 ($targetDistro)"
+                    Write-Info 'systemd 와 docker 그룹을 적용하려면 "wsl --shutdown" 후 재시작할 것'
+                }
+                catch {
+                    Write-Fail "Docker Engine 설치 실패: $($_.Exception.Message) / 위 WSL 로그 확인"
+                }
+            }
+        }
+    }
+
+    # Docker Desktop 이 남아 있으면 두 개의 docker CLI 가 PATH 를 두고 다툰다.
+    # 자동으로 제거하지는 않는다. 사용자가 직접 정리할 항목으로 알린다.
+    if (Get-Command winget -ErrorAction SilentlyContinue) {
+        winget list --id Docker.DockerDesktop --exact --accept-source-agreements 1>$null 2>$null
+        if ($LASTEXITCODE -eq 0) {
+            Write-Fail 'Docker Desktop 이 설치되어 있음. WSL 의 docker CLI 와 PATH 가 충돌하므로 "winget uninstall Docker.DockerDesktop" 으로 제거를 검토할 것'
+        }
+    }
+}
+else {
+    Write-Step '4. WSL Docker Engine (건너뜀)'
+}
+
+# ---------------------------------------------------------------------------
+# 5. 패키지 매니저로 설치되지 않는 앱 안내
+# ---------------------------------------------------------------------------
+Write-Step '5. 수동 설치 안내'
 
 $manualScript = Join-Path $PSScriptRoot 'install-manual-apps.ps1'
 if (Test-Path $manualScript) {
@@ -617,7 +917,7 @@ if (Test-Path $manualScript) {
 }
 
 # ---------------------------------------------------------------------------
-# 5. 요약
+# 6. 요약
 # ---------------------------------------------------------------------------
 Write-Step '완료'
 
@@ -632,7 +932,9 @@ if ($script:Warnings.Count -eq 0) {
 
 Write-Host ""
 Write-Host "다음 단계:" -ForegroundColor White
-Write-Host "  1) 새 터미널을 열어 PATH 를 갱신한다."
+Write-Host "  1) 새 터미널을 열어 PATH 를 갱신한다. (mise shim 등록이 이때 반영된다)"
 Write-Host "  2) git --version / java -version / node -v / python --version 으로 확인한다."
-Write-Host "  3) wsl --shutdown 으로 .wslconfig 를 적용한다."
+Write-Host "     java 와 node 는 mise shim 이 응답해야 한다. 'mise ls' 로 어떤 버전이 잡혔는지 본다."
+Write-Host "  3) wsl --shutdown 후 wsl 을 다시 연다. (.wslconfig, systemd, docker 그룹이 이때 적용된다)"
+Write-Host "  4) WSL 안에서 'docker run --rm hello-world' 로 컨테이너 동작을 확인한다."
 Write-Host ""
